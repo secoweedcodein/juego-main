@@ -4,6 +4,7 @@ import { getAttack, type AttackDef } from "../data/attacks";
 import { getCharacter } from "../data/characters";
 import type { FighterState, HitEvent, MatchState } from "../core/types";
 import { contactPoint, hitbox, hurtbox, sphereHitsBox } from "./hitbox";
+import { useWeapon, weaponBonus } from "../systems/props";
 
 const COMBO_WINDOW = 45;
 const GUARD_BREAK_TICKS = 40;
@@ -49,6 +50,8 @@ export function stepCombat(
 
   if (isActive && !act.connected) {
     const s = hitbox(attacker, atk);
+    const wpn = atk.kind === "grab" ? { damage: 0, reach: 0 } : weaponBonus(state, attacker);
+    s.cx += attacker.facing * wpn.reach;
     const b = hurtbox(defender);
     const invulnerable = defender.dodgeTicks > 0;
     if (!invulnerable && sphereHitsBox(s, b)) {
@@ -68,7 +71,7 @@ export function stepCombat(
         }
       } else {
         const scale = 1 - Math.min(0.5, attacker.comboCount * 0.07);
-        defender.health = Math.max(0, defender.health - atk.damage * scale);
+        defender.health = Math.max(0, defender.health - (atk.damage + wpn.damage) * scale);
         defender.hitstun = atk.hitstun;
         defender.flash = 8;
         defender.blocking = false;
@@ -78,6 +81,8 @@ export function stepCombat(
         attacker.comboTimer = COMBO_WINDOW;
       }
 
+      if (wpn.damage > 0) useWeapon(state, attacker);
+
       attacker.x += attacker.facing * atk.advance * 0.08;
 
       events.push({
@@ -85,7 +90,7 @@ export function stepCombat(
         attackerId: attacker.id,
         defenderId: defender.id,
         attackId: atk.id,
-        damage: blocked ? atk.chip : atk.damage,
+        damage: blocked ? atk.chip : atk.damage + wpn.damage,
         blocked,
         combo: attacker.comboCount,
         x: p.x,
