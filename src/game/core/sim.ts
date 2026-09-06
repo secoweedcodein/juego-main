@@ -3,13 +3,14 @@
 
 import { getCharacter } from "../data/characters";
 import { startAttack, stepCombat } from "../combat/resolve";
+import { getStage, type StageDef } from "../data/stages";
+import { createHazard, createProps, stepHazard, stepProps } from "../systems/props";
 import {
   EMPTY_INTENT,
   INTRO_TICKS,
   ROUND_END_TICKS,
   ROUND_SECONDS,
   ROUNDS_TO_WIN,
-  STAGE_BOUNDS,
   TICK_DT,
   TICK_RATE,
   type FighterState,
@@ -45,13 +46,25 @@ export function createFighter(id: string, characterId: string, x: number): Fight
     flash: 0,
     attackBuffer: null,
     bufferTicks: 0,
+    weapon: null,
+    interactCooldown: 0,
+    fallingOut: false,
   };
 }
 
-export function createMatchState(charA: string, charB: string): MatchState {
+export function createMatchState(
+  charA: string,
+  charB: string,
+  stageId = "neon",
+): MatchState {
+  const stage = getStage(stageId);
   return {
     tick: 0,
     fighters: [createFighter("p1", charA, -4), createFighter("p2", charB, 4)],
+    stageId: stage.id,
+    props: createProps(stage),
+    hazard: createHazard(stage),
+    hazardWarning: "",
     phase: "intro",
     phaseTicks: INTRO_TICKS,
     round: 1,
@@ -80,7 +93,13 @@ function pickAttack(intent: InputIntent): string | null {
   return null;
 }
 
-function stepFighter(f: FighterState, intent: InputIntent, opponent: FighterState, canAct: boolean) {
+function stepFighter(
+  f: FighterState,
+  intent: InputIntent,
+  opponent: FighterState,
+  canAct: boolean,
+  stage: StageDef,
+) {
   const { movement: m, maxStamina } = getCharacter(f.characterId);
 
   // Orientación de combate: siempre mirando al rival mientras se está en suelo.
@@ -180,15 +199,27 @@ function stepFighter(f: FighterState, intent: InputIntent, opponent: FighterStat
   f.z += f.vz * TICK_DT;
   f.y += f.vy * TICK_DT;
 
-  if (f.y <= 0) {
+  if (f.y <= 0 && !f.fallingOut) {
     f.y = 0;
     f.vy = 0;
     f.grounded = true;
   }
 
-  // Límites del escenario
-  f.x = Math.max(-STAGE_BOUNDS.x, Math.min(STAGE_BOUNDS.x, f.x));
-  f.z = Math.max(-STAGE_BOUNDS.z, Math.min(STAGE_BOUNDS.z, f.z));
+  // Límites del escenario (FASE 5: por mapa) y ring-out (FASE 6)
+  const bx = stage.bounds.x;
+  if (stage.ringOut) {
+    if (f.fallingOut || (Math.abs(f.x) > bx && Math.abs(f.vx) > 4.5)) {
+      // Empujado fuera de la plataforma: cae al agua y pierde el round.
+      f.fallingOut = true;
+      f.grounded = false;
+      if (f.y < -4) f.health = 0;
+    } else if (!f.fallingOut) {
+      f.x = Math.max(-bx, Math.min(bx, f.x));
+    }
+  } else {
+    f.x = Math.max(-bx, Math.min(bx, f.x));
+  }
+  f.z = Math.max(-stage.bounds.z, Math.min(stage.bounds.z, f.z));
 
   // Regeneración de stamina al no gastar
   if (!canDodge && !f.action) {
@@ -218,6 +249,10 @@ function resetForRound(state: MatchState) {
   Object.assign(b, nb);
   state.timer = ROUND_SECONDS * TICK_RATE;
   state.events.length = 0;
+  const stage = getStage(state.stageId);
+  state.props = createProps(stage);
+  state.hazard = createHazard(stage);
+  state.hazardWarning = "";
 }
 
 function endRound(state: MatchState, winner: number, reason: string) {
@@ -233,12 +268,13 @@ function endRound(state: MatchState, winner: number, reason: string) {
 
 export function stepMatch(state: MatchState, intents: [InputIntent, InputIntent]) {
   const [a, b] = state.fighters;
+  const stage = getStage(state.stageId);
   state.events.length = 0;
 
   if (state.phase === "intro") {
     state.phaseTicks--;
-    stepFighter(a, EMPTY_INTENT, b, false);
-    stepFighter(b, EMPTY_INTENT, a, false);
+    stepFighter(a, EMPTY_INTENT, b, false, stage);
+    stepFighter(b, EMPTY_INTENT, a, false, stage);
     if (state.phaseTicks <= 0) {
       state.phase = "fight";
       state.announce = "FIGHT!";
@@ -250,8 +286,8 @@ export function stepMatch(state: MatchState, intents: [InputIntent, InputIntent]
 
   if (state.phase === "roundEnd" || state.phase === "matchEnd") {
     state.phaseTicks--;
-    stepFighter(a, EMPTY_INTENT, b, false);
-    stepFighter(b, EMPTY_INTENT, a, false);
+    stepFighter(a, EMPTY_INTENT, b, false, stage);
+    stepFighter(b, EMPTY_INTENT, a, false, stage);
     if (state.phaseTicks <= 0 && state.phase === "roundEnd") {
       state.round++;
       resetForRound(state);
@@ -265,20 +301,30 @@ export function stepMatch(state: MatchState, intents: [InputIntent, InputIntent]
 
   // fight
   if (state.phaseTicks > 0) state.phaseTicks--; // desvanece el "FIGHT!"
-  stepFighter(a, intents[0] ?? EMPTY_INTENT, b, true);
-  stepFighter(b, intents[1] ?? EMPTY_INTENT, a, true);
+  stepFighter(a, intents[0] ?? EMPTY_INTENT, b, true, stage);
+  stepFighter(b, intents[1] ?? EMPTY_INTENT, a, true, stage);
 
   for (const e of stepCombat(state, a, b)) state.events.push(e);
   for (const e of stepCombat(state, b, a)) state.events.push(e);
 
-  resolveOverlap(a, b);
+  for (const e of stepProps(
+    state,
+    [intents[0]?.interact ?? false, intents[1]?.interact ?? false],
+    stage,
+  )) {
+    state.events.push(e);
+  }
+  for (const e of stepHazard(state, stage)) state.events.push(e);
+
+  if (!a.fallingOut && !b.fallingOut) resolveOverlap(a, b);
 
   if (state.timer > 0) state.timer--;
 
   const aDead = a.health <= 0;
   const bDead = b.health <= 0;
   if (aDead || bDead) {
-    endRound(state, aDead && bDead ? -1 : aDead ? 1 : 0, "K.O.");
+    const ringOut = a.fallingOut || b.fallingOut;
+    endRound(state, aDead && bDead ? -1 : aDead ? 1 : 0, ringOut ? "RING OUT" : "K.O.");
   } else if (state.timer <= 0) {
     const winner = a.health === b.health ? -1 : a.health > b.health ? 0 : 1;
     endRound(state, winner, "TIME UP");
