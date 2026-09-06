@@ -20,10 +20,11 @@ const KEY_MAP: Record<string, string> = {
   KeyK: "heavy",
   KeyL: "kick",
   KeyU: "grab",
+  KeyF: "interact",
 };
 
 /** Acciones de un solo disparo: se consumen al leerse. */
-const ONE_SHOT = new Set(["light", "heavy", "kick", "grab"]);
+const ONE_SHOT = new Set(["light", "heavy", "kick", "grab", "interact"]);
 
 export class KeyboardInput {
   private pressed = new Set<string>();
@@ -85,6 +86,7 @@ export class KeyboardInput {
       heavy: edge("heavy"),
       kick: edge("kick"),
       grab: edge("grab"),
+      interact: edge("interact"),
     };
   }
 }
