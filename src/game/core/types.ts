@@ -16,6 +16,8 @@ export interface InputIntent {
   heavy: boolean;
   kick: boolean;
   grab: boolean;
+  /** recoger / lanzar objeto (FASE 6) */
+  interact: boolean;
 }
 
 export const EMPTY_INTENT: InputIntent = {
@@ -28,7 +30,9 @@ export const EMPTY_INTENT: InputIntent = {
   heavy: false,
   kick: false,
   grab: false,
+  interact: false,
 };
+
 
 export interface ActionState {
   attackId: string;
