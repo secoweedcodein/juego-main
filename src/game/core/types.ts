@@ -77,6 +77,42 @@ export interface FighterState {
   flash: number;
   attackBuffer: string | null;
   bufferTicks: number;
+
+  /* --- FASE 6: objetos y hazards --- */
+  /** id del objeto que lleva en la mano, o null */
+  weapon: string | null;
+  /** ticks de cooldown de interacción (recoger/lanzar) */
+  interactCooldown: number;
+  /** cayendo fuera del escenario (ring-out) */
+  fallingOut: boolean;
+}
+
+export type PropPhase = "ground" | "held" | "flying" | "broken";
+
+export interface PropState {
+  id: string;
+  kind: string;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  phase: PropPhase;
+  holder: string | null;
+  /** golpes restantes antes de romperse */
+  hp: number;
+  /** ticks para reaparecer cuando está roto */
+  respawn: number;
+  spin: number;
+}
+
+export interface HazardState {
+  /** ticks hasta el siguiente aviso */
+  timer: number;
+  phase: "idle" | "warn" | "active";
+  x: number;
+  ticks: number;
 }
 
 export type MatchPhase = "intro" | "fight" | "roundEnd" | "matchEnd";
@@ -98,6 +134,12 @@ export interface HitEvent {
 export interface MatchState {
   tick: number;
   fighters: [FighterState, FighterState];
+  /** mapa activo (FASE 5) */
+  stageId: string;
+
+  /* --- FASE 6 --- */
+  props: PropState[];
+  hazard: HazardState;
 
   /* --- FASE 3: rounds --- */
   phase: MatchPhase;
@@ -112,6 +154,8 @@ export interface MatchState {
   announce: string;
   /** eventos consumidos por render/audio cada frame */
   events: HitEvent[];
+  /** aviso de peligro mostrado en el HUD */
+  hazardWarning: string;
 }
 
 export const TICK_RATE = 60;
