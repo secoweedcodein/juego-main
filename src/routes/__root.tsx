@@ -77,14 +77,21 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
-      { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { title: "NEON FURY FIGHT — 3D Cyberpunk Fighting Game" },
+      {
+        name: "description",
+        content:
+          "Juego de peleas 3D cyberpunk 1v1 determinista con combos, esquivas, hazards y ranking.",
+      },
+      { name: "author", content: "NEON FURY FIGHT" },
+      { property: "og:title", content: "NEON FURY FIGHT — 3D Cyberpunk Fighting Game" },
+      {
+        property: "og:description",
+        content: "Lucha cyberpunk 3D determinista de alto impacto en una metrópolis futurista.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:site", content: "@NeonFuryFight" },
     ],
     links: [
       {

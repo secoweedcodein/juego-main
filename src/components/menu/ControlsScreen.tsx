@@ -10,6 +10,7 @@ import {
   loadKeymap,
   primaryCode,
   remapKey,
+  saveKeymap,
   type GameAction,
   type Keymap,
 } from "../../game/config/keymap";
@@ -23,6 +24,7 @@ export function ControlsScreen({ onBack }: { onBack: () => void }) {
   const captureRef = useRef(false);
 
   const update = (next: Keymap) => {
+    saveKeymap(next);
     setKeymap(next);
     setCapturing(null);
   };

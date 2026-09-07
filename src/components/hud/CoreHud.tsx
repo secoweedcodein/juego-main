@@ -1,6 +1,6 @@
 // HUD (FASES 1-3): vida, stamina, timer real, pips de round, combos y anuncios.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { MatchState } from "../../game/core/types";
 import { ROUNDS_TO_WIN, TICK_RATE } from "../../game/core/types";
 import { getCharacter } from "../../game/data/characters";
@@ -53,6 +53,7 @@ function Pips({ wins, mirrored }: { wins: number; mirrored?: boolean }) {
 export function CoreHud({ match }: { match: React.RefObject<MatchState> }) {
   const [, force] = useState(0);
   const raf = useRef<number>(0);
+  const km = useMemo(() => loadKeymap(), []);
 
   useEffect(() => {
     let mounted = true;
@@ -92,6 +93,7 @@ export function CoreHud({ match }: { match: React.RefObject<MatchState> }) {
     (m.phase === "fight" && m.phaseTicks > 0);
 
   const matchWinner = m.phase === "matchEnd" ? (m.wins[0] > m.wins[1] ? c1.name : c2.name) : null;
+  const key = (a: Parameters<typeof primaryCode>[1]) => keyDisplayName(primaryCode(km, a));
 
   return (
     <div className="pointer-events-none fixed inset-0 z-10 select-none">
@@ -170,20 +172,12 @@ export function CoreHud({ match }: { match: React.RefObject<MatchState> }) {
       )}
 
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded border border-border bg-card/70 px-4 py-2 text-center text-[0.7rem] tracking-[0.2em] text-muted-foreground backdrop-blur">
-        {(() => {
-          const km = loadKeymap();
-          const key = (a: keyof typeof km) => keyDisplayName(primaryCode(km, a));
-          return (
-            <>
-              {key("forward")}/{key("back")} AVANZAR (ATRÁS = BLOQUEAR) · {key("left")}/
-              {key("right")} LATERAL · {key("jump")} SALTO · {key("dodge")} ESQUIVA ·{" "}
-              {key("crouch")} AGACHARSE
-              <br />
-              {key("light")} GOLPE · {key("heavy")} FUERTE · {key("kick")} PATADA · {key("grab")}{" "}
-              AGARRE · {key("interact")} OBJETO · {key("pause")} PAUSA
-            </>
-          );
-        })()}
+        {key("left")}/{key("right")} MOVER · {key("forward")}/{key("back")} PROFUNDIDAD ·{" "}
+        {key("jump")} SALTO · {key("dodge")} ESQUIVA · {key("crouch")} AGACHARSE · {key("block")}{" "}
+        BLOQUEO
+        <br />
+        {key("light")} GOLPE · {key("heavy")} FUERTE · {key("kick")} PATADA · {key("grab")} AGARRE ·{" "}
+        {key("interact")} OBJETO · {key("pause")} PAUSA
       </div>
     </div>
   );

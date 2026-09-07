@@ -25,8 +25,8 @@ export type GameAction = (typeof GAME_ACTIONS)[number];
 export type Keymap = Record<GameAction, string[]>;
 
 export const ACTION_LABELS: Record<GameAction, string> = {
-  forward: "Adelante",
-  back: "Atrás (bloquea)",
+  forward: "Adelante (fondo)",
+  back: "Atrás (cámara)",
   left: "Izquierda",
   right: "Derecha",
   jump: "Salto",

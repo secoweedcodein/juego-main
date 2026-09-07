@@ -148,8 +148,9 @@ function stepFighter(
 
   f.crouching = !busy && intent.crouch && f.grounded && f.dodgeTicks === 0;
 
-  // Bloqueo: retroceder (o tecla de bloqueo dedicada) sin atacar en el suelo.
-  f.blocking = !busy && f.grounded && (intent.forward < 0 || intent.block) && f.dodgeTicks === 0;
+  // Bloqueo: retroceder respecto al rival (o tecla de bloqueo dedicada) sin atacar en el suelo.
+  const retreating = intent.lateral !== 0 && intent.lateral * f.facing < 0;
+  f.blocking = !busy && f.grounded && (retreating || intent.block) && f.dodgeTicks === 0;
 
   // Esquiva: impulso corto en la dirección de entrada, cuesta stamina.
   const canDodge =
@@ -160,8 +161,8 @@ function stepFighter(
     f.dodgeCooldown === 0 &&
     f.stamina >= m.dodgeStamina;
   if (canDodge) {
-    const dirX = intent.forward !== 0 ? Math.sign(intent.forward) * f.facing : -f.facing;
-    const dirZ = Math.sign(intent.lateral);
+    const dirX = intent.lateral !== 0 ? Math.sign(intent.lateral) : -f.facing;
+    const dirZ = intent.forward !== 0 ? -Math.sign(intent.forward) : 0;
     f.vx = dirX * m.dodgeImpulse * (dirZ !== 0 ? 0.6 : 1);
     f.vz = dirZ * m.dodgeImpulse * 0.7;
     f.stamina -= m.dodgeStamina;
@@ -173,9 +174,10 @@ function stepFighter(
   const speedScale = f.crouching ? 0.45 : f.blocking ? 0.6 : 1;
 
   if (!locked) {
-    // Aceleración: adelante = hacia el rival.
-    const wishX = intent.forward * f.facing;
-    const maxX = (intent.forward >= 0 ? m.maxForward : m.maxBackward) * speedScale;
+    // Aceleración horizontal en pantalla (A/D): A = -X (izquierda), D = +X (derecha).
+    const wishX = intent.lateral;
+    const advancing = wishX * f.facing > 0;
+    const maxX = (advancing ? m.maxForward : m.maxBackward) * speedScale;
     if (wishX !== 0) {
       f.vx += wishX * m.accel * TICK_DT;
       f.vx = Math.max(-maxX, Math.min(maxX, f.vx));
@@ -183,8 +185,10 @@ function stepFighter(
       f.vx = damp(f.vx, m.drag, TICK_DT);
     }
 
-    if (intent.lateral !== 0) {
-      f.vz += intent.lateral * m.accel * 0.7 * TICK_DT;
+    // Aceleración en profundidad (W/S): W = -Z (fondo), S = +Z (hacia cámara).
+    const wishZ = -intent.forward;
+    if (wishZ !== 0) {
+      f.vz += wishZ * m.accel * 0.7 * TICK_DT;
       const maxZ = m.maxLateral * speedScale;
       f.vz = Math.max(-maxZ, Math.min(maxZ, f.vz));
     } else {
@@ -200,7 +204,10 @@ function stepFighter(
     f.vz = damp(f.vz, 5.5, TICK_DT);
   }
 
-  // Gravedad / caída
+  // Gravedad / caída: si está despegado del suelo, asegurar estado no-grounded y aplicar gravedad.
+  if (f.y > 0.001) {
+    f.grounded = false;
+  }
   if (!f.grounded) {
     f.vy -= m.gravity * TICK_DT;
   }

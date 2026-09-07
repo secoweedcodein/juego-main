@@ -4,9 +4,9 @@
 export type Facing = 1 | -1;
 
 export interface InputIntent {
-  /** -1 atrás, +1 adelante (relativo al enfrentamiento) */
+  /** -1 atrás (cámara), +1 adelante (fondo) en profundidad visual (eje Z) */
   forward: number;
-  /** -1 / +1 desplazamiento lateral en profundidad */
+  /** -1 izquierda, +1 derecha en pantalla (eje X) */
   lateral: number;
   jump: boolean;
   dodge: boolean;

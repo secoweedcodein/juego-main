@@ -49,11 +49,12 @@ export class DummyAI {
     const foeAttacking = foe.action !== null && dist < 2.3;
 
     // Acercarse / mantener distancia (agresividad según dificultad).
+    // Con la semántica de cámara lateral, el eje de combate X es lateral (self.facing).
     const approachDist = KEEP_AWAY + 0.4 * r;
     if (dist > approachDist) {
-      intent.forward = 1;
+      intent.lateral = self.facing;
     } else if (dist < 1.0) {
-      intent.forward = -1;
+      intent.lateral = -self.facing;
     }
 
     // Bloqueo reactivo: cuando el rival ataca cerca o tras fallar el ataque.
@@ -81,19 +82,21 @@ export class DummyAI {
       // Esquivar golpes ajenos que vienen de frente.
       if (foeAttacking && r > 0.985 && dist < 2.2) intent.dodge = true;
 
-      // Movilidad ocasional hacia un lateral.
+      // Movilidad ocasional en profundidad (eje Z: forward).
       if (dist < ATTACK_RANGE && r > 0.93) {
-        intent.lateral = r > 0.965 ? 1 : -1;
+        intent.forward = r > 0.965 ? 1 : -1;
       }
     }
 
     // Apoyos de distancia: hacia el rival cuando se acerca poco a poco.
-    if (dist > GOOD_RANGE + 0.5 && !foeAttacking && r > 0.6) intent.forward = 1;
+    if (dist > GOOD_RANGE + 0.5 && !foeAttacking && r > 0.6) intent.lateral = self.facing;
 
-    // Evita pasarse del borde del escenario.
+    // Evita pasarse del borde del escenario en X y en Z.
     const bounds = 8.0;
-    if (self.x > bounds * 0.8) intent.forward = -1;
-    if (self.x < -bounds * 0.8) intent.forward = 1;
+    if (self.x > bounds * 0.8) intent.lateral = -1;
+    if (self.x < -bounds * 0.8) intent.lateral = 1;
+    if (self.z > 2.0) intent.forward = 1;
+    if (self.z < -2.0) intent.forward = -1;
 
     return intent;
   }

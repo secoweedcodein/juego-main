@@ -61,13 +61,14 @@ interface AnimContext {
 /** Deriva el estado de animación desde el estado real del juego. */
 function animKind(s: FighterState, match: MatchState): string {
   if (s.fallingOut) return "fall";
-  if (match.phase === "matchEnd" && s.health > 0) {
+  if (match.phase === "matchEnd") {
     const isWinner =
       (s.id === "p1" && match.wins[0] > match.wins[1]) ||
       (s.id === "p2" && match.wins[1] > match.wins[0]);
-    return isWinner ? "victory" : "idle";
+    if (isWinner) return "victory";
+    if (s.health <= 0) return "ko";
+    return "defeat";
   }
-  if (match.phase === "matchEnd") return "ko";
   if (s.downTicks > 0) return "down";
   if (s.getupTicks > 0) return "getup";
   if (s.dodgeTicks > 0) return "dodge";
@@ -237,6 +238,21 @@ function computeJoints(c: AnimContext): Joints {
       j.pivotRoll = Math.sin(t * 3) * 0.06;
       break;
     }
+    case "defeat": {
+      j.crouch = 0.75;
+      j.kneeL = 1.35;
+      j.kneeR = 1.1;
+      j.legL = 0.45;
+      j.legR = -0.3;
+      j.spineX = 0.45;
+      j.headX = 0.55;
+      j.armRz = 0.25;
+      j.armRx = -0.3;
+      j.armLz = -0.25;
+      j.elbowR = 0.6;
+      j.elbowL = 0.6;
+      break;
+    }
     case "light":
     case "heavy": {
       const p = attackProgress(s);
@@ -372,139 +388,415 @@ export function Fighter({ state, match }: Props) {
     }
   });
 
+  const isBoxer = char.archetype === "Boxer";
+  const isKickboxer = char.archetype === "Kickboxer";
+  const isGrappler = char.archetype === "Grappler";
+  const isStreet = char.archetype === "Street Fighter";
+
   const mat = (
     color: string,
     emissive?: string,
-    opts?: { roughness?: number; metalness?: number },
+    opts?: { roughness?: number; metalness?: number; emissiveIntensity?: number },
   ): THREE.MeshStandardMaterialParameters => ({
     color,
-    emissive: emissive ?? color,
-    emissiveIntensity: emissive ? 1.3 : 0,
-    roughness: opts?.roughness ?? 0.6,
-    metalness: opts?.metalness ?? 0.25,
+    emissive: emissive ?? (opts?.emissiveIntensity ? color : "#000000"),
+    emissiveIntensity: opts?.emissiveIntensity ?? (emissive ? 1.4 : 0),
+    roughness: opts?.roughness ?? 0.55,
+    metalness: opts?.metalness ?? 0.2,
   });
 
   const matEl = (
     color: string,
     emissive?: string,
-    opts?: { roughness?: number; metalness?: number },
+    opts?: { roughness?: number; metalness?: number; emissiveIntensity?: number },
   ) => <meshStandardMaterial {...mat(color, emissive, opts)} />;
 
   return (
     <group ref={root}>
       <group ref={pivot}>
-        {/* cintura */}
+        {/* Cadera / Trunks / Shorts de lucha */}
         <mesh position={[0, 1.0, 0]} castShadow>
-          {matEl(char.colors.suit)}
-          <boxGeometry args={[0.34, 0.28, 0.2]} />
+          {matEl(char.colors.pants, undefined, { roughness: 0.7, metalness: 0.1 })}
+          <boxGeometry args={[0.34, 0.26, 0.22]} />
         </mesh>
-        {/* tórax */}
+        {/* Rayas neon laterales de los shorts */}
+        <mesh position={[-0.175, 1.0, 0]} castShadow>
+          {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.2 })}
+          <boxGeometry args={[0.015, 0.22, 0.14]} />
+        </mesh>
+        <mesh position={[0.175, 1.0, 0]} castShadow>
+          {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.2 })}
+          <boxGeometry args={[0.015, 0.22, 0.14]} />
+        </mesh>
+
+        {/* Cinturón de luchador / Cinturón de campeonato */}
+        <mesh position={[0, 1.07, 0]} castShadow>
+          {matEl("#141418", undefined, { roughness: 0.4, metalness: 0.3 })}
+          <boxGeometry args={[0.36, 0.09, 0.24]} />
+        </mesh>
+        <mesh position={[0, 1.07, 0.125]} castShadow>
+          {matEl(char.colors.trim, undefined, { roughness: 0.25, metalness: 0.8 })}
+          <boxGeometry args={[isGrappler ? 0.16 : 0.12, isGrappler ? 0.11 : 0.08, 0.02]} />
+        </mesh>
+        <mesh position={[0, 1.07, 0.136]}>
+          {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 2.2 })}
+          <boxGeometry args={[0.05, 0.05, 0.01]} />
+        </mesh>
+
+        {/* Lazo del cinturón de artes marciales (Street Fighter) */}
+        {isStreet && (
+          <group position={[0.07, 0.98, 0.13]} rotation={[0, 0, -0.15]}>
+            <mesh castShadow>
+              {matEl(char.colors.trim)}
+              <boxGeometry args={[0.035, 0.16, 0.015]} />
+            </mesh>
+          </group>
+        )}
+
+        {/* Tórax atlético con pecho esculpido */}
         <mesh ref={chest} position={[0, 1.34, 0]} castShadow>
-          {matEl(char.colors.suit)}
-          <capsuleGeometry args={[0.27, 0.36, 6, 14]} />
+          {matEl(char.colors.suit, undefined, { roughness: 0.6, metalness: 0.2 })}
+          <capsuleGeometry args={[isGrappler ? 0.29 : 0.26, isGrappler ? 0.38 : 0.34, 8, 16]} />
         </mesh>
-        {/* banda de neón del implante */}
-        <mesh position={[0, 1.5, 0.19]} castShadow>
-          {matEl(char.colors.accent, char.colors.accent)}
-          <boxGeometry args={[0.32, 0.05, 0.12]} />
+        {/* Pectorales esculpidos en relieve */}
+        <mesh position={[-0.09, 1.42, 0.14]} rotation={[0.08, -0.1, 0.02]} castShadow>
+          {matEl(char.colors.suit, undefined, { roughness: 0.5, metalness: 0.25 })}
+          <boxGeometry args={[0.15, 0.14, 0.09]} />
         </mesh>
-        {/* hombros */}
-        <mesh position={[0, 1.56, 0]} castShadow>
-          {matEl(char.colors.suit)}
-          <boxGeometry args={[0.5, 0.24, 0.32]} />
+        <mesh position={[0.09, 1.42, 0.14]} rotation={[0.08, 0.1, -0.02]} castShadow>
+          {matEl(char.colors.suit, undefined, { roughness: 0.5, metalness: 0.25 })}
+          <boxGeometry args={[0.15, 0.14, 0.09]} />
         </mesh>
-        {/* cabeza */}
-        <group ref={head} position={[0, 1.86, 0]}>
+        {/* Abdomen atlético / definición muscular */}
+        <mesh position={[0, 1.25, 0.13]} castShadow>
+          {matEl(char.colors.skin, undefined, { roughness: 0.75, metalness: 0.05 })}
+          <boxGeometry args={[0.18, 0.16, 0.05]} />
+        </mesh>
+        <mesh position={[0, 1.25, 0.156]}>
+          {matEl("#000000", undefined, { roughness: 0.9 })}
+          <boxGeometry args={[0.015, 0.14, 0.01]} />
+        </mesh>
+
+        {/* Arnés / Líneas de neon en el pecho */}
+        <mesh position={[0, 1.48, 0.19]} castShadow>
+          {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.6 })}
+          <boxGeometry args={[0.3, 0.04, 0.04]} />
+        </mesh>
+        {/* Columna cibernética en la espalda */}
+        <mesh position={[0, 1.34, -0.16]} castShadow>
+          {matEl("#101014", undefined, { roughness: 0.3, metalness: 0.7 })}
+          <boxGeometry args={[0.08, 0.3, 0.04]} />
+        </mesh>
+        <mesh position={[0, 1.34, -0.185]}>
+          {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.5 })}
+          <boxGeometry args={[0.03, 0.22, 0.02]} />
+        </mesh>
+
+        {/* Hombros / Trapecios atléticos */}
+        <mesh position={[0, 1.57, 0]} castShadow>
+          {matEl(char.colors.suit, undefined, { roughness: 0.55, metalness: 0.3 })}
+          <boxGeometry args={[isGrappler ? 0.6 : 0.52, 0.22, 0.3]} />
+        </mesh>
+        {/* Cuello atlético */}
+        <mesh position={[0, 1.71, 0]} castShadow>
+          {matEl(char.colors.skin, undefined, { roughness: 0.8, metalness: 0.05 })}
+          <cylinderGeometry args={[0.09, 0.12, 0.14, 12]} />
+        </mesh>
+
+        {/* Cabeza del luchador */}
+        <group ref={head} position={[0, 1.88, 0]}>
+          {/* Rostro y mandíbula */}
           <mesh castShadow>
-            {matEl(char.colors.skin, undefined, { roughness: 0.8 })}
-            <sphereGeometry args={[0.19, 18, 16]} />
+            {matEl(char.colors.skin, undefined, { roughness: 0.8, metalness: 0.05 })}
+            <sphereGeometry args={[0.18, 18, 16]} />
           </mesh>
-          <mesh position={[0, 0.02, 0.15]}>
-            {matEl(char.colors.accent, char.colors.accent)}
-            <boxGeometry args={[0.28, 0.07, 0.07]} />
+          <mesh position={[0, -0.07, 0.05]} castShadow>
+            {matEl(char.colors.skin, undefined, { roughness: 0.8, metalness: 0.05 })}
+            <boxGeometry args={[0.13, 0.1, 0.14]} />
+          </mesh>
+          {/* Peinado estilizado de luchador */}
+          <mesh position={[0, 0.11, -0.02]} castShadow>
+            {matEl(char.colors.hair, undefined, { roughness: 0.9, metalness: 0.1 })}
+            <boxGeometry args={[0.22, 0.12, 0.22]} />
+          </mesh>
+          {/* Cresta / mechones de combate */}
+          <mesh position={[0, 0.17, 0.03]} rotation={[0.2, 0, 0]} castShadow>
+            {matEl(char.colors.hair, undefined, { roughness: 0.9, metalness: 0.1 })}
+            <coneGeometry args={[0.07, 0.12, 6]} />
+          </mesh>
+          {/* Coleta para Kickboxer (Kestrel) */}
+          {isKickboxer && (
+            <mesh position={[0, 0.12, -0.16]} rotation={[-0.4, 0, 0]} castShadow>
+              {matEl(char.colors.hair, undefined, { roughness: 0.9 })}
+              <coneGeometry args={[0.06, 0.24, 6]} />
+            </mesh>
+          )}
+          {/* Cinta de combate / Headband alrededor de la frente */}
+          <mesh position={[0, 0.04, 0]} castShadow>
+            {matEl(
+              isStreet ? char.colors.trim : char.colors.accent,
+              isStreet ? undefined : char.colors.accent,
+              {
+                roughness: 0.5,
+                emissiveIntensity: isStreet ? 0 : 0.8,
+              },
+            )}
+            <boxGeometry args={[0.38, 0.045, 0.38]} />
+          </mesh>
+          {/* Cintas traseras flotantes de la cinta de combate (Ash / Street) */}
+          {isStreet && (
+            <group position={[0, 0.04, -0.2]} rotation={[0.3, 0, 0]}>
+              <mesh position={[-0.04, -0.08, 0]} rotation={[0, 0, -0.15]}>
+                {matEl(char.colors.trim)}
+                <boxGeometry args={[0.03, 0.18, 0.01]} />
+              </mesh>
+              <mesh position={[0.04, -0.09, 0]} rotation={[0, 0, 0.12]}>
+                {matEl(char.colors.trim)}
+                <boxGeometry args={[0.03, 0.2, 0.01]} />
+              </mesh>
+            </group>
+          )}
+          {/* Visor cyber / Ojos brillantes de luchador */}
+          <mesh position={[0, 0.02, 0.16]}>
+            {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 2.4 })}
+            <boxGeometry args={[0.22, 0.05, 0.06]} />
+          </mesh>
+          {/* Auriculares / Implantes tácticos laterales */}
+          <mesh position={[-0.185, 0.01, 0]} rotation={[0, 0, Math.PI / 2]}>
+            {matEl("#141418", char.colors.accent, {
+              roughness: 0.3,
+              metalness: 0.8,
+              emissiveIntensity: 0.6,
+            })}
+            <cylinderGeometry args={[0.035, 0.035, 0.02, 8]} />
+          </mesh>
+          <mesh position={[0.185, 0.01, 0]} rotation={[0, 0, Math.PI / 2]}>
+            {matEl("#141418", char.colors.accent, {
+              roughness: 0.3,
+              metalness: 0.8,
+              emissiveIntensity: 0.6,
+            })}
+            <cylinderGeometry args={[0.035, 0.035, 0.02, 8]} />
           </mesh>
         </group>
 
-        {/* Brazos (se atacan/pelean desde el hombro) */}
-        <group ref={armL} position={[-0.34, 1.56, 0]}>
+        {/* Brazo Izquierdo */}
+        <group ref={armL} position={[-0.35, 1.56, 0]}>
+          {/* Hombrera / Deltoide */}
+          <mesh castShadow>
+            {matEl(char.colors.suit, undefined, { roughness: 0.5, metalness: 0.3 })}
+            <sphereGeometry args={[0.11, 10, 8]} />
+          </mesh>
           <group position={[0, -0.22, 0]}>
+            {/* Bíceps musculoso de piel con brazalete */}
             <mesh castShadow>
-              {matEl(char.colors.suit)}
-              <capsuleGeometry args={[0.075, 0.4, 4, 8]} />
+              {matEl(char.colors.skin, undefined, { roughness: 0.75, metalness: 0.05 })}
+              <capsuleGeometry args={[0.08, 0.32, 6, 12]} />
             </mesh>
-            <group ref={forearmL} position={[0, -0.42, 0]}>
+            <mesh position={[0, 0.06, 0]}>
+              {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.3 })}
+              <cylinderGeometry args={[0.088, 0.088, 0.03, 12]} />
+            </mesh>
+            <group ref={forearmL} position={[0, -0.38, 0]}>
+              {/* Antebrazo con vendaje de combate */}
               <mesh castShadow>
-                {matEl(char.colors.suit)}
-                <capsuleGeometry args={[0.065, 0.34, 4, 8]} />
+                {matEl(char.colors.suit, undefined, { roughness: 0.6, metalness: 0.2 })}
+                <capsuleGeometry args={[0.075, 0.28, 6, 12]} />
               </mesh>
-              <mesh position={[0, -0.36, 0]} castShadow>
-                {matEl(char.colors.suit)}
-                <sphereGeometry args={[0.08, 10, 8]} />
+              {/* Muñequera / Cierre del guante */}
+              <mesh position={[0, -0.24, 0]} castShadow>
+                {matEl(char.colors.trim, undefined, { roughness: 0.4, metalness: 0.5 })}
+                <cylinderGeometry args={[0.09, 0.085, 0.08, 12]} />
+              </mesh>
+              {/* GUANTE DE PELEA (Boxeo / MMA / Grappler) */}
+              <mesh position={[0, -0.36, 0.02]} castShadow>
+                {matEl(char.colors.gloves, undefined, { roughness: 0.45, metalness: 0.2 })}
+                <capsuleGeometry args={[isBoxer ? 0.115 : 0.095, isBoxer ? 0.16 : 0.12, 8, 14]} />
+              </mesh>
+              {/* Nudillos con placa de impacto neon */}
+              <mesh position={[0, -0.39, 0.07]}>
+                {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 2.0 })}
+                <boxGeometry args={[isBoxer ? 0.14 : 0.11, 0.04, 0.04]} />
               </mesh>
             </group>
           </group>
         </group>
-        <group ref={armR} position={[0.34, 1.56, 0]}>
+
+        {/* Brazo Derecho */}
+        <group ref={armR} position={[0.35, 1.56, 0]}>
+          {/* Hombrera / Deltoide */}
+          <mesh castShadow>
+            {matEl(char.colors.suit, undefined, { roughness: 0.5, metalness: 0.3 })}
+            <sphereGeometry args={[0.11, 10, 8]} />
+          </mesh>
           <group position={[0, -0.22, 0]}>
+            {/* Bíceps musculoso de piel con brazalete */}
             <mesh castShadow>
-              {matEl(char.colors.suit)}
-              <capsuleGeometry args={[0.075, 0.4, 4, 8]} />
+              {matEl(char.colors.skin, undefined, { roughness: 0.75, metalness: 0.05 })}
+              <capsuleGeometry args={[0.08, 0.32, 6, 12]} />
             </mesh>
-            <group ref={forearmR} position={[0, -0.42, 0]}>
+            <mesh position={[0, 0.06, 0]}>
+              {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.3 })}
+              <cylinderGeometry args={[0.088, 0.088, 0.03, 12]} />
+            </mesh>
+            <group ref={forearmR} position={[0, -0.38, 0]}>
+              {/* Antebrazo con vendaje de combate */}
               <mesh castShadow>
-                {matEl(char.colors.suit)}
-                <capsuleGeometry args={[0.065, 0.34, 4, 8]} />
+                {matEl(char.colors.suit, undefined, { roughness: 0.6, metalness: 0.2 })}
+                <capsuleGeometry args={[0.075, 0.28, 6, 12]} />
               </mesh>
-              <mesh position={[0, -0.36, 0]} castShadow>
-                {matEl(char.colors.suit)}
-                <sphereGeometry args={[0.08, 10, 8]} />
+              {/* Muñequera / Cierre del guante */}
+              <mesh position={[0, -0.24, 0]} castShadow>
+                {matEl(char.colors.trim, undefined, { roughness: 0.4, metalness: 0.5 })}
+                <cylinderGeometry args={[0.09, 0.085, 0.08, 12]} />
+              </mesh>
+              {/* GUANTE DE PELEA (Boxeo / MMA / Grappler) */}
+              <mesh position={[0, -0.36, 0.02]} castShadow>
+                {matEl(char.colors.gloves, undefined, { roughness: 0.45, metalness: 0.2 })}
+                <capsuleGeometry args={[isBoxer ? 0.115 : 0.095, isBoxer ? 0.16 : 0.12, 8, 14]} />
+              </mesh>
+              {/* Nudillos con placa de impacto neon */}
+              <mesh position={[0, -0.39, 0.07]}>
+                {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 2.0 })}
+                <boxGeometry args={[isBoxer ? 0.14 : 0.11, 0.04, 0.04]} />
               </mesh>
             </group>
           </group>
         </group>
 
-        {/* Piernas */}
+        {/* Pierna Izquierda */}
         <group ref={legL} position={[-0.15, 0.98, 0]}>
+          {/* Muslo con pantalón / shorts de lucha */}
           <mesh position={[0, -0.24, 0]} castShadow>
-            {matEl(char.colors.suit, char.colors.accent, { metalness: 0.4 })}
-            <capsuleGeometry args={[0.11, 0.36, 4, 8]} />
+            {matEl(char.colors.pants, undefined, { roughness: 0.7, metalness: 0.1 })}
+            <capsuleGeometry args={[0.12, 0.36, 6, 12]} />
+          </mesh>
+          {/* Franja neon lateral en el muslo */}
+          <mesh position={[-0.12, -0.24, 0]}>
+            {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.4 })}
+            <boxGeometry args={[0.015, 0.3, 0.06]} />
+          </mesh>
+          {/* Rodillera de combate */}
+          <mesh position={[0, -0.42, 0.04]} castShadow>
+            {matEl(char.colors.trim, undefined, { roughness: 0.3, metalness: 0.6 })}
+            <sphereGeometry args={[0.08, 8, 6]} />
           </mesh>
           <group ref={shinL} position={[0, -0.42, 0]}>
-            <mesh position={[0, -0.3, 0]} castShadow>
-              {matEl(char.colors.suit, char.colors.accent, { metalness: 0.4 })}
-              <capsuleGeometry args={[0.09, 0.38, 4, 8]} />
+            {/* Canilla / Pantorrilla */}
+            <mesh position={[0, -0.28, 0]} castShadow>
+              {matEl(char.colors.pants, undefined, { roughness: 0.7, metalness: 0.1 })}
+              <capsuleGeometry args={[0.095, 0.36, 6, 12]} />
             </mesh>
-            <group ref={footL} position={[0, -0.5, 0.04]}>
-              <mesh castShadow>
-                {matEl(char.colors.suit, undefined, { metalness: 0.5 })}
-                <boxGeometry args={[0.12, 0.09, 0.26]} />
+            {/* Espinillera de combate */}
+            <mesh position={[0, -0.24, 0.07]} castShadow>
+              {matEl(char.colors.suit, undefined, { roughness: 0.4, metalness: 0.4 })}
+              <boxGeometry args={[0.1, 0.26, 0.03]} />
+            </mesh>
+            <mesh position={[0, -0.24, 0.086]}>
+              {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.5 })}
+              <boxGeometry args={[0.02, 0.2, 0.01]} />
+            </mesh>
+            {/* BOTA DE COMBATE / LUCHA */}
+            <group ref={footL} position={[0, -0.48, 0.04]}>
+              {/* Cuello alto de la bota */}
+              <mesh position={[0, 0.05, -0.02]} castShadow>
+                {matEl(char.colors.suit, undefined, { roughness: 0.5, metalness: 0.3 })}
+                <cylinderGeometry args={[0.1, 0.095, 0.12, 10]} />
+              </mesh>
+              {/* Empeine y cuerpo de la bota */}
+              <mesh position={[0, -0.02, 0.04]} castShadow>
+                {matEl("#121216", undefined, { roughness: 0.5, metalness: 0.3 })}
+                <boxGeometry args={[0.13, 0.1, 0.26]} />
+              </mesh>
+              {/* Puntera reforzada */}
+              <mesh position={[0, -0.01, 0.12]} castShadow>
+                {matEl(char.colors.trim, undefined, { roughness: 0.3, metalness: 0.7 })}
+                <boxGeometry args={[0.12, 0.07, 0.1]} />
+              </mesh>
+              {/* Suela de alto agarre con reborde neon */}
+              <mesh position={[0, -0.065, 0.04]} castShadow>
+                {matEl("#08080a", undefined, { roughness: 0.9, metalness: 0.1 })}
+                <boxGeometry args={[0.14, 0.03, 0.28]} />
+              </mesh>
+              <mesh position={[0, -0.06, -0.06]}>
+                {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 2.0 })}
+                <boxGeometry args={[0.12, 0.015, 0.04]} />
               </mesh>
             </group>
           </group>
         </group>
+
+        {/* Pierna Derecha */}
         <group ref={legR} position={[0.15, 0.98, 0]}>
+          {/* Muslo con pantalón / shorts de lucha */}
           <mesh position={[0, -0.24, 0]} castShadow>
-            {matEl(char.colors.suit, char.colors.accent, { metalness: 0.4 })}
-            <capsuleGeometry args={[0.11, 0.36, 4, 8]} />
+            {matEl(char.colors.pants, undefined, { roughness: 0.7, metalness: 0.1 })}
+            <capsuleGeometry args={[0.12, 0.36, 6, 12]} />
+          </mesh>
+          {/* Franja neon lateral en el muslo */}
+          <mesh position={[0.12, -0.24, 0]}>
+            {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.4 })}
+            <boxGeometry args={[0.015, 0.3, 0.06]} />
+          </mesh>
+          {/* Rodillera de combate */}
+          <mesh position={[0, -0.42, 0.04]} castShadow>
+            {matEl(char.colors.trim, undefined, { roughness: 0.3, metalness: 0.6 })}
+            <sphereGeometry args={[0.08, 8, 6]} />
           </mesh>
           <group ref={shinR} position={[0, -0.42, 0]}>
-            <mesh position={[0, -0.3, 0]} castShadow>
-              {matEl(char.colors.suit, char.colors.accent, { metalness: 0.4 })}
-              <capsuleGeometry args={[0.09, 0.38, 4, 8]} />
+            {/* Canilla / Pantorrilla */}
+            <mesh position={[0, -0.28, 0]} castShadow>
+              {matEl(char.colors.pants, undefined, { roughness: 0.7, metalness: 0.1 })}
+              <capsuleGeometry args={[0.095, 0.36, 6, 12]} />
             </mesh>
-            <group ref={footR} position={[0, -0.5, 0.04]}>
-              <mesh castShadow>
-                {matEl(char.colors.suit, undefined, { metalness: 0.5 })}
-                <boxGeometry args={[0.12, 0.09, 0.26]} />
+            {/* Espinillera de combate */}
+            <mesh position={[0, -0.24, 0.07]} castShadow>
+              {matEl(char.colors.suit, undefined, { roughness: 0.4, metalness: 0.4 })}
+              <boxGeometry args={[0.1, 0.26, 0.03]} />
+            </mesh>
+            <mesh position={[0, -0.24, 0.086]}>
+              {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.5 })}
+              <boxGeometry args={[0.02, 0.2, 0.01]} />
+            </mesh>
+            {/* BOTA DE COMBATE / LUCHA */}
+            <group ref={footR} position={[0, -0.48, 0.04]}>
+              {/* Cuello alto de la bota */}
+              <mesh position={[0, 0.05, -0.02]} castShadow>
+                {matEl(char.colors.suit, undefined, { roughness: 0.5, metalness: 0.3 })}
+                <cylinderGeometry args={[0.1, 0.095, 0.12, 10]} />
+              </mesh>
+              {/* Empeine y cuerpo de la bota */}
+              <mesh position={[0, -0.02, 0.04]} castShadow>
+                {matEl("#121216", undefined, { roughness: 0.5, metalness: 0.3 })}
+                <boxGeometry args={[0.13, 0.1, 0.26]} />
+              </mesh>
+              {/* Puntera reforzada */}
+              <mesh position={[0, -0.01, 0.12]} castShadow>
+                {matEl(char.colors.trim, undefined, { roughness: 0.3, metalness: 0.7 })}
+                <boxGeometry args={[0.12, 0.07, 0.1]} />
+              </mesh>
+              {/* Suela de alto agarre con reborde neon */}
+              <mesh position={[0, -0.065, 0.04]} castShadow>
+                {matEl("#08080a", undefined, { roughness: 0.9, metalness: 0.1 })}
+                <boxGeometry args={[0.14, 0.03, 0.28]} />
+              </mesh>
+              <mesh position={[0, -0.06, -0.06]}>
+                {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 2.0 })}
+                <boxGeometry args={[0.12, 0.015, 0.04]} />
               </mesh>
             </group>
           </group>
         </group>
       </group>
-      {/* sombra de contacto barata */}
+
+      {/* Sombra de contacto dinámica que atenúa suavemente con la altura del luchador */}
       <mesh rotation-x={-Math.PI / 2} position={[0, 0.02, 0]}>
-        <circleGeometry args={[0.42, 20]} />
-        <meshBasicMaterial color="#000000" transparent opacity={0.35} />
+        <circleGeometry args={[0.48, 24]} />
+        <meshBasicMaterial
+          color="#000000"
+          transparent
+          opacity={Math.max(0.08, 0.45 - (state.current?.y ?? 0) * 0.12)}
+        />
       </mesh>
     </group>
   );

@@ -204,8 +204,8 @@ export function CharacterSelect({ onStart }: { onStart: (setup: MatchSetup) => v
           </button>
 
           <p className="text-[11px] leading-relaxed text-muted-foreground">
-            W/S avanzar (S bloquea) · A/D lateral · Space salto · Shift esquiva · Ctrl agacharse · J
-            golpe · K fuerte · L patada · U agarre · F recoger/lanzar objeto · Esc menú
+            A/D mover · W/S profundidad · Space salto · Shift esquiva · Ctrl agacharse · Shift Der /
+            Atrás bloquea · J golpe · K fuerte · L patada · U agarre · F recoger/lanzar · Esc menú
           </p>
         </aside>
       </div>

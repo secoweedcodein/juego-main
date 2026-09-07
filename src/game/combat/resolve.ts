@@ -97,15 +97,23 @@ export function stepCombat(
         defender.hitstun = atk.hitstun;
         defender.flash = 8;
         defender.blocking = false;
-        defender.vx += attacker.facing * atk.knockback * 0.35;
-        if (atk.kind === "grab") defender.vy = 4.5;
-        attacker.comboCount++;
-        attacker.comboTimer = COMBO_WINDOW;
-        state.damageDealt[attackerIdx] += dmg;
-
-        // KO -> queda tumbado; golpe fuerte sin bloquear -> knockdown.
-        if (defender.health <= 0) applyKnockdown(defender, KO_DOWN_TICKS);
-        else if (atk.kind === "heavy") applyKnockdown(defender, KNOCKDOWN_TICKS);
+        if (atk.kind === "grab") {
+          // Agarre: atrae al rival directamente enfrente del atacante y lo inmoviliza (no se puede alejar)
+          defender.x = attacker.x + attacker.facing * 0.95;
+          defender.z = attacker.z;
+          defender.y = 0;
+          defender.vx = 0;
+          defender.vz = 0;
+          defender.vy = 0;
+          defender.grounded = true;
+          // Azote demoledor contra la lona con knockdown completo
+          applyKnockdown(defender, defender.health <= 0 ? KO_DOWN_TICKS : KNOCKDOWN_TICKS);
+        } else {
+          defender.vx += attacker.facing * atk.knockback * 0.35;
+          // KO -> queda tumbado; golpe fuerte sin bloquear -> knockdown.
+          if (defender.health <= 0) applyKnockdown(defender, KO_DOWN_TICKS);
+          else if (atk.kind === "heavy") applyKnockdown(defender, KNOCKDOWN_TICKS);
+        }
       }
 
       if (wpn.damage > 0) consumeWeapon(state, attacker);
