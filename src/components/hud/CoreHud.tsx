@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { MatchState } from "../../game/core/types";
 import { ROUNDS_TO_WIN, TICK_RATE } from "../../game/core/types";
 import { getCharacter } from "../../game/data/characters";
+import { PROP_STATS, getStage, type PropKind } from "../../game/data/stages";
 
 function Bar({
   value,
@@ -72,6 +73,16 @@ export function CoreHud({ match }: { match: React.RefObject<MatchState> }) {
   const c1 = getCharacter(p1.characterId);
   const c2 = getCharacter(p2.characterId);
   const seconds = Math.ceil(m.timer / TICK_RATE);
+  const stage = getStage(m.stageId);
+
+  const weaponLabel = (weapon: string | null) => {
+    if (!weapon) return null;
+    const prop = m.props.find((p) => p.id === weapon);
+    if (!prop) return null;
+    return (PROP_STATS[prop.kind as PropKind] ?? PROP_STATS.crate).label;
+  };
+  const w1 = weaponLabel(p1.weapon);
+  const w2 = weaponLabel(p2.weapon);
 
   const showAnnounce =
     m.phase === "intro" ||
@@ -96,6 +107,11 @@ export function CoreHud({ match }: { match: React.RefObject<MatchState> }) {
             <Bar value={p1.stamina} max={c1.maxStamina} tone="stamina" />
           </div>
           <Pips wins={m.wins[0]} />
+          {w1 && (
+            <div className="mt-2 inline-block border border-hud-timer/60 px-2 py-0.5 text-[10px] tracking-[0.25em] text-hud-timer">
+              {w1}
+            </div>
+          )}
           {p1.comboCount > 1 && (
             <div className="mt-2 font-display text-lg text-hud-timer">{p1.comboCount} HITS</div>
           )}
@@ -108,6 +124,14 @@ export function CoreHud({ match }: { match: React.RefObject<MatchState> }) {
           <div className="mt-1 text-[0.65rem] tracking-[0.35em] text-muted-foreground">
             ROUND {m.round}
           </div>
+          <div className="mt-1 text-[0.6rem] tracking-[0.3em] text-muted-foreground/70">
+            {stage.name}
+          </div>
+          {m.hazardWarning && (
+            <div className="mt-2 animate-pulse border border-destructive/70 px-2 py-1 text-[0.65rem] tracking-[0.3em] text-destructive">
+              {m.hazardWarning}
+            </div>
+          )}
         </div>
 
         <div className="w-[38%] max-w-md text-right">
@@ -121,6 +145,11 @@ export function CoreHud({ match }: { match: React.RefObject<MatchState> }) {
             <Bar value={p2.stamina} max={c2.maxStamina} tone="stamina" mirrored />
           </div>
           <Pips wins={m.wins[1]} mirrored />
+          {w2 && (
+            <div className="mt-2 inline-block border border-hud-timer/60 px-2 py-0.5 text-[10px] tracking-[0.25em] text-hud-timer">
+              {w2}
+            </div>
+          )}
           {p2.comboCount > 1 && (
             <div className="mt-2 font-display text-lg text-hud-timer">{p2.comboCount} HITS</div>
           )}
@@ -142,7 +171,7 @@ export function CoreHud({ match }: { match: React.RefObject<MatchState> }) {
 
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded border border-border bg-card/70 px-4 py-2 text-center text-[0.7rem] tracking-[0.2em] text-muted-foreground backdrop-blur">
         W/S AVANZAR (S = BLOQUEAR) · A/D LATERAL · SPACE SALTO · SHIFT ESQUIVA · CTRL AGACHARSE
-        <br />J GOLPE · K FUERTE · L PATADA · U AGARRE
+        <br />J GOLPE · K FUERTE · L PATADA · U AGARRE · F RECOGER/LANZAR
       </div>
     </div>
   );
