@@ -1,7 +1,7 @@
 // Bucle principal: tick fijo 60 Hz, input -> simulación -> render.
 
 import { useEffect, useRef, useState } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas } from "@react-three/fiber";
 import { createMatchState, stepMatch } from "../core/sim";
 import { EMPTY_INTENT, TICK_DT, type MatchState } from "../core/types";
 import { KeyboardInput } from "../systems/input";
@@ -9,7 +9,9 @@ import { DummyAI, type AiLevel } from "../systems/ai";
 import { Fighter } from "./Fighter";
 import { HitSparks } from "./HitSparks";
 import { SideCamera } from "./SideCamera";
-import { TestStage } from "./TestStage";
+import { StageView } from "./stages";
+import { PropsView } from "./Props";
+import { HazardFx } from "./HazardFx";
 import { CoreHud } from "../../components/hud/CoreHud";
 
 /** Bucle de simulación independiente del render (rAF + tick fijo). */
@@ -46,17 +48,21 @@ function useSimulationLoop(
 export function GameCanvas({
   playerCharacter = "ash",
   opponentCharacter = "vulcan",
+  stageId = "neon",
   aiLevel = "normal",
   onExit,
   onRematch,
 }: {
   playerCharacter?: string;
   opponentCharacter?: string;
+  stageId?: string;
   aiLevel?: AiLevel;
   onExit?: () => void;
   onRematch?: () => void;
 }) {
-  const match = useRef<MatchState>(createMatchState(playerCharacter, opponentCharacter));
+  const match = useRef<MatchState>(
+    createMatchState(playerCharacter, opponentCharacter, stageId),
+  );
   const input = useRef<KeyboardInput>(new KeyboardInput());
   const ai = useRef<DummyAI>(new DummyAI(aiLevel));
   const p1 = useRef(match.current.fighters[0]);
@@ -85,10 +91,12 @@ export function GameCanvas({
   return (
     <div className="fixed inset-0 bg-background">
       <Canvas shadows dpr={[1, 1.75]} camera={{ position: [0, 2.4, 12], fov: 52 }}>
-        <TestStage />
+        <StageView stageId={stageId} />
         <SideCamera match={match} />
         <Fighter state={p1} />
         <Fighter state={p2} />
+        <PropsView match={match} />
+        <HazardFx match={match} />
         <HitSparks match={match} />
       </Canvas>
       <CoreHud match={match} />

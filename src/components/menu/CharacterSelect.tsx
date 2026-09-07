@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { CHARACTERS, type CharacterDef } from "../../game/data/characters";
 import type { AiLevel } from "../../game/systems/ai";
+import { STAGE_LIST } from "../../game/data/stages";
 
 const ROSTER = Object.values(CHARACTERS);
 
@@ -66,6 +67,7 @@ function Portrait({
 export interface MatchSetup {
   player: string;
   opponent: string;
+  stage: string;
   ai: AiLevel;
 }
 
@@ -73,6 +75,8 @@ export function CharacterSelect({ onStart }: { onStart: (setup: MatchSetup) => v
   const [player, setPlayer] = useState("ash");
   const [opponent, setOpponent] = useState("vulcan");
   const [ai, setAi] = useState<AiLevel>("normal");
+  const [stage, setStage] = useState("neon");
+  const pickedStage = STAGE_LIST.find((s) => s.id === stage) ?? STAGE_LIST[0]!;
   const pick = CHARACTERS[player]!;
 
   return (
@@ -142,6 +146,35 @@ export function CharacterSelect({ onStart }: { onStart: (setup: MatchSetup) => v
 
           <div>
             <div className="mb-2 text-[11px] uppercase tracking-[0.3em] text-muted-foreground">
+              Escenario
+            </div>
+            <div className="space-y-2">
+              {STAGE_LIST.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => setStage(s.id)}
+                  className={`w-full rounded-sm border px-3 py-2 text-left transition ${
+                    stage === s.id
+                      ? "border-hud-stamina bg-card"
+                      : "border-border/60 bg-card/40 hover:border-hud-stamina/60"
+                  }`}
+                  style={{ borderLeftColor: s.palette.primary, borderLeftWidth: 3 }}
+                >
+                  <div className="font-display text-xs tracking-[0.25em]">{s.name}</div>
+                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                    {s.subtitle}
+                  </div>
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+              {pickedStage.description}
+            </p>
+          </div>
+
+          <div>
+            <div className="mb-2 text-[11px] uppercase tracking-[0.3em] text-muted-foreground">
               Dificultad
             </div>
             <div className="flex gap-2">
@@ -164,7 +197,7 @@ export function CharacterSelect({ onStart }: { onStart: (setup: MatchSetup) => v
 
           <button
             type="button"
-            onClick={() => onStart({ player, opponent, ai })}
+            onClick={() => onStart({ player, opponent, stage, ai })}
             className="w-full rounded-sm border border-hud-stamina bg-hud-stamina/10 py-3 font-display tracking-[0.3em] text-hud-stamina shadow-neon transition hover:bg-hud-stamina/20"
           >
             PELEAR
@@ -172,7 +205,7 @@ export function CharacterSelect({ onStart }: { onStart: (setup: MatchSetup) => v
 
           <p className="text-[11px] leading-relaxed text-muted-foreground">
             W/S avanzar (S bloquea) · A/D lateral · Space salto · Shift esquiva · Ctrl agacharse ·
-            J golpe · K fuerte · L patada · U agarre · Esc menú
+            J golpe · K fuerte · L patada · U agarre · F recoger/lanzar objeto · Esc menú
           </p>
         </aside>
       </div>

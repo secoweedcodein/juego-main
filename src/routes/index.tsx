@@ -38,6 +38,7 @@ function Play() {
       key={runId}
       playerCharacter={setup.player}
       opponentCharacter={setup.opponent}
+      stageId={setup.stage}
       aiLevel={setup.ai}
       onExit={() => setSetup(null)}
       onRematch={() => setRunId((n) => n + 1)}
