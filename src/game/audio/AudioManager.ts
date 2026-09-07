@@ -393,7 +393,7 @@ export class AudioManager {
   }
 
   private pattern(stageId: string): MusicPattern {
-    return MUSIC[stageId] ?? (MUSIC.neon as MusicPattern);
+    return MUSIC[stageId] ?? (MUSIC["neon"] as MusicPattern);
   }
 
   private schedule() {
@@ -425,7 +425,7 @@ export class AudioManager {
     }
 
     const hatEvery = pat.hatOpen ? 2 : 1;
-    for (let i = 0; i < pat.hatOpen ? 2 : 1; i++) {
+    for (let i = 0; i < hatEvery; i++) {
       const h = step + i * 0.5;
       if (h % 1 === 0) {
         this.noiseNote(

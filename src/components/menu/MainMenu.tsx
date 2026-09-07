@@ -23,10 +23,10 @@ export function MainMenu({
 
   const items = [
     { label: "PELEAR", desc: "Selecciona luchador, rival y escenario", fn: onPlay, confirm: true },
-    { label: "ESTADÍSTICAS", desc: "Récord, rango y rating", fn: onStats },
-    { label: "HISTORIAL", desc: "Combates anteriores", fn: onHistory },
-    { label: "OPCIONES", desc: "Audio y gráficos", fn: onOptions },
-    { label: "CONTROLES", desc: "Remapea tus teclas", fn: onControls },
+    { label: "ESTADÍSTICAS", desc: "Récord, rango y rating", fn: onStats, confirm: false },
+    { label: "HISTORIAL", desc: "Combates anteriores", fn: onHistory, confirm: false },
+    { label: "OPCIONES", desc: "Audio y gráficos", fn: onOptions, confirm: false },
+    { label: "CONTROLES", desc: "Remapea tus teclas", fn: onControls, confirm: false },
   ] as const;
 
   return (

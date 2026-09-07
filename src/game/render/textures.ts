@@ -48,9 +48,12 @@ function build(kind: TextureKind) {
   const noiseAmp = kind === "asphalt" ? 26 : kind === "concrete" ? 34 : 22;
   const seed = kind === "asphalt" ? 11 : kind === "concrete" ? 29 : 47;
 
-  const data = ctx.createImageData(size, size);
-  const ndata = nctx.createImageData(size, size);
-  const rdata = rctx.createImageData(size, size);
+  const idata = ctx.createImageData(size, size);
+  const indata = nctx.createImageData(size, size);
+  const irdata = rctx.createImageData(size, size);
+  const data = idata.data;
+  const ndata = indata.data;
+  const rdata = irdata.data;
   const height = new Float32Array(size * size);
 
   // Altura base ruidosa.
@@ -91,15 +94,18 @@ function build(kind: TextureKind) {
     // Remaches y planchas.
     for (let gy = 0; gy < 68; gy++) {
       for (let gx = 0; gx < 68; gx++) {
-        const i = gy * 512 + gx;
-        height[i] -= 0.5;
+        const i = gy * size + gx;
+        height[i] = (height[i] ?? 0) - 0.5;
       }
     }
   }
 
   for (let i = 0; i < cracks.length; i++) {
     const p = cracks[i]!;
-    if (p.x >= 0 && p.x < size && p.y >= 0 && p.y < size) height[p.y * size + p.x] -= 0.75;
+    if (p.x >= 0 && p.x < size && p.y >= 0 && p.y < size) {
+      const idx = p.y * size + p.x;
+      height[idx] = (height[idx] ?? 0) - 0.75;
+    }
   }
 
   // Mapas de salida.
@@ -141,9 +147,9 @@ function build(kind: TextureKind) {
     }
   }
 
-  ctx.putImageData(data, 0, 0);
-  nctx.putImageData(ndata, 0, 0);
-  rctx.putImageData(rdata, 0, 0);
+  ctx.putImageData(idata, 0, 0);
+  nctx.putImageData(indata, 0, 0);
+  rctx.putImageData(irdata, 0, 0);
   map.needsUpdate = true;
   normal.needsUpdate = true;
   roughness.needsUpdate = true;

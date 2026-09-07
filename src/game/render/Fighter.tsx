@@ -376,45 +376,51 @@ export function Fighter({ state, match }: Props) {
     color: string,
     emissive?: string,
     opts?: { roughness?: number; metalness?: number },
-  ) => (
-    <meshStandardMaterial
-      color={color}
-      emissive={emissive ?? color}
-      emissiveIntensity={emissive ? 1.3 : 0}
-      roughness={opts?.roughness ?? 0.6}
-      metalness={opts?.metalness ?? 0.25}
-    />
-  );
+  ): THREE.MeshStandardMaterialParameters => ({
+    color,
+    emissive: emissive ?? color,
+    emissiveIntensity: emissive ? 1.3 : 0,
+    roughness: opts?.roughness ?? 0.6,
+    metalness: opts?.metalness ?? 0.25,
+  });
+
+  const matEl = (
+    color: string,
+    emissive?: string,
+    opts?: { roughness?: number; metalness?: number },
+  ) => <meshStandardMaterial {...mat(color, emissive, opts)} />;
 
   return (
     <group ref={root}>
       <group ref={pivot}>
         {/* cintura */}
-        <mesh position={[0, 1.0, 0]} castShadow material={mat(char.colors.suit)}>
+        <mesh position={[0, 1.0, 0]} castShadow>
+          {matEl(char.colors.suit)}
           <boxGeometry args={[0.34, 0.28, 0.2]} />
         </mesh>
         {/* tórax */}
-        <mesh ref={chest} position={[0, 1.34, 0]} castShadow material={mat(char.colors.suit)}>
+        <mesh ref={chest} position={[0, 1.34, 0]} castShadow>
+          {matEl(char.colors.suit)}
           <capsuleGeometry args={[0.27, 0.36, 6, 14]} />
         </mesh>
         {/* banda de neón del implante */}
-        <mesh
-          position={[0, 1.5, 0.19]}
-          castShadow
-          material={mat(char.colors.accent, char.colors.accent)}
-        >
+        <mesh position={[0, 1.5, 0.19]} castShadow>
+          {matEl(char.colors.accent, char.colors.accent)}
           <boxGeometry args={[0.32, 0.05, 0.12]} />
         </mesh>
         {/* hombros */}
-        <mesh position={[0, 1.56, 0]} castShadow material={mat(char.colors.suit)}>
+        <mesh position={[0, 1.56, 0]} castShadow>
+          {matEl(char.colors.suit)}
           <boxGeometry args={[0.5, 0.24, 0.32]} />
         </mesh>
         {/* cabeza */}
         <group ref={head} position={[0, 1.86, 0]}>
-          <mesh castShadow material={mat(char.colors.skin, undefined, { roughness: 0.8 })}>
+          <mesh castShadow>
+            {matEl(char.colors.skin, undefined, { roughness: 0.8 })}
             <sphereGeometry args={[0.19, 18, 16]} />
           </mesh>
-          <mesh position={[0, 0.02, 0.15]} material={mat(char.colors.accent, char.colors.accent)}>
+          <mesh position={[0, 0.02, 0.15]}>
+            {matEl(char.colors.accent, char.colors.accent)}
             <boxGeometry args={[0.28, 0.07, 0.07]} />
           </mesh>
         </group>
@@ -422,14 +428,17 @@ export function Fighter({ state, match }: Props) {
         {/* Brazos (se atacan/pelean desde el hombro) */}
         <group ref={armL} position={[-0.34, 1.56, 0]}>
           <group position={[0, -0.22, 0]}>
-            <mesh castShadow material={mat(char.colors.suit)}>
+            <mesh castShadow>
+              {matEl(char.colors.suit)}
               <capsuleGeometry args={[0.075, 0.4, 4, 8]} />
             </mesh>
             <group ref={forearmL} position={[0, -0.42, 0]}>
-              <mesh castShadow material={mat(char.colors.suit)}>
+              <mesh castShadow>
+                {matEl(char.colors.suit)}
                 <capsuleGeometry args={[0.065, 0.34, 4, 8]} />
               </mesh>
-              <mesh position={[0, -0.36, 0]} castShadow material={mat(char.colors.suit)}>
+              <mesh position={[0, -0.36, 0]} castShadow>
+                {matEl(char.colors.suit)}
                 <sphereGeometry args={[0.08, 10, 8]} />
               </mesh>
             </group>
@@ -437,14 +446,17 @@ export function Fighter({ state, match }: Props) {
         </group>
         <group ref={armR} position={[0.34, 1.56, 0]}>
           <group position={[0, -0.22, 0]}>
-            <mesh castShadow material={mat(char.colors.suit)}>
+            <mesh castShadow>
+              {matEl(char.colors.suit)}
               <capsuleGeometry args={[0.075, 0.4, 4, 8]} />
             </mesh>
             <group ref={forearmR} position={[0, -0.42, 0]}>
-              <mesh castShadow material={mat(char.colors.suit)}>
+              <mesh castShadow>
+                {matEl(char.colors.suit)}
                 <capsuleGeometry args={[0.065, 0.34, 4, 8]} />
               </mesh>
-              <mesh position={[0, -0.36, 0]} castShadow material={mat(char.colors.suit)}>
+              <mesh position={[0, -0.36, 0]} castShadow>
+                {matEl(char.colors.suit)}
                 <sphereGeometry args={[0.08, 10, 8]} />
               </mesh>
             </group>
@@ -453,46 +465,36 @@ export function Fighter({ state, match }: Props) {
 
         {/* Piernas */}
         <group ref={legL} position={[-0.15, 0.98, 0]}>
-          <mesh
-            position={[0, -0.24, 0]}
-            castShadow
-            material={mat(char.colors.suit, char.colors.accent, { metalness: 0.4 })}
-          >
+          <mesh position={[0, -0.24, 0]} castShadow>
+            {matEl(char.colors.suit, char.colors.accent, { metalness: 0.4 })}
             <capsuleGeometry args={[0.11, 0.36, 4, 8]} />
           </mesh>
           <group ref={shinL} position={[0, -0.42, 0]}>
-            <mesh
-              position={[0, -0.3, 0]}
-              castShadow
-              material={mat(char.colors.suit, char.colors.accent, { metalness: 0.4 })}
-            >
+            <mesh position={[0, -0.3, 0]} castShadow>
+              {matEl(char.colors.suit, char.colors.accent, { metalness: 0.4 })}
               <capsuleGeometry args={[0.09, 0.38, 4, 8]} />
             </mesh>
             <group ref={footL} position={[0, -0.5, 0.04]}>
-              <mesh castShadow material={mat(char.colors.suit, undefined, { metalness: 0.5 })}>
+              <mesh castShadow>
+                {matEl(char.colors.suit, undefined, { metalness: 0.5 })}
                 <boxGeometry args={[0.12, 0.09, 0.26]} />
               </mesh>
             </group>
           </group>
         </group>
         <group ref={legR} position={[0.15, 0.98, 0]}>
-          <mesh
-            position={[0, -0.24, 0]}
-            castShadow
-            material={mat(char.colors.suit, char.colors.accent, { metalness: 0.4 })}
-          >
+          <mesh position={[0, -0.24, 0]} castShadow>
+            {matEl(char.colors.suit, char.colors.accent, { metalness: 0.4 })}
             <capsuleGeometry args={[0.11, 0.36, 4, 8]} />
           </mesh>
           <group ref={shinR} position={[0, -0.42, 0]}>
-            <mesh
-              position={[0, -0.3, 0]}
-              castShadow
-              material={mat(char.colors.suit, char.colors.accent, { metalness: 0.4 })}
-            >
+            <mesh position={[0, -0.3, 0]} castShadow>
+              {matEl(char.colors.suit, char.colors.accent, { metalness: 0.4 })}
               <capsuleGeometry args={[0.09, 0.38, 4, 8]} />
             </mesh>
             <group ref={footR} position={[0, -0.5, 0.04]}>
-              <mesh castShadow material={mat(char.colors.suit, undefined, { metalness: 0.5 })}>
+              <mesh castShadow>
+                {matEl(char.colors.suit, undefined, { metalness: 0.5 })}
                 <boxGeometry args={[0.12, 0.09, 0.26]} />
               </mesh>
             </group>

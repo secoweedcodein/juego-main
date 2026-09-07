@@ -7,6 +7,9 @@ import { EMPTY_INTENT } from "../core/types";
 
 export type AiLevel = "idle" | "easy" | "normal";
 
+/** Claves de InputIntent con tipo booleano (ataques). */
+type AttackKeys = "light" | "heavy" | "kick" | "grab";
+
 const KEEP_AWAY = 1.9;
 const ATTACK_RANGE = 1.9;
 const GOOD_RANGE = 1.35;
@@ -23,7 +26,7 @@ export class DummyAI {
   }
 
   /** Activa una acción de un solo uso con pequeña probabilidad de secuencia. */
-  private action(r: number, slots: Array<[number, keyof InputIntent]>) {
+  private action(r: number, slots: Array<[number, AttackKeys]>): AttackKeys | null {
     let acc = 0;
     for (const [p, key] of slots) {
       acc += p;
@@ -57,7 +60,7 @@ export class DummyAI {
     const wantsBlock = foeAttacking && r > 0.42;
     if (wantsBlock) intent.block = true;
 
-    const canEngage = self.action === null && self.dodgeTicks === 0 && self.cooldown === 0;
+    const canEngage = self.action === null && self.dodgeTicks === 0 && this.cooldown === 0;
 
     if (canEngage && !wantsBlock) {
       if (dist < ATTACK_RANGE) {
