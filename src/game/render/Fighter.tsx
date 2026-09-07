@@ -1,9 +1,12 @@
-// FASE 9 — Luchador humanoide procedural con animación conectada al estado
-// real del juego (no decorativa). Se sustituye el placeholder de cápsulas por
-// un "rig" de joints (grupos) que el controlador de animación mueve según:
-//   GAME STATE -> FighterState -> Animation Controller -> Joints
-// No se usan modelos externos: la geometría es procedural (CC0 propio) y el
-// sistema permite cambiar a modelos GLB/GLTF riggeados sin tocar el combate.
+// FASE 9+12 — Luchador humanoid con identidad visual propia y animación conectada
+// al estado real del juego (no decorativa).
+//
+//   GAME STATE -> FighterState -> Animation Controller -> Joints -> CharacterModel
+//
+// El controlador deriva las poses desde el estado real de la simulación y mueve
+// el rig común (joints). La geometría visible la monta `CharacterModel`, que da
+// a cada luchador una silueta, proporciones, cabeza y equipamiento distintos.
+// El gameplay, los hitboxes y el resto de sistemas no dependen de esta capa.
 
 import { useRef } from "react";
 import { useFrame } from "@react-three/fiber";
@@ -11,6 +14,7 @@ import * as THREE from "three";
 import type { FighterState, MatchState } from "../core/types";
 import { getCharacter, type CharacterDef } from "../data/characters";
 import { getAttack } from "../data/attacks";
+import { CharacterModel, shadowRadius, type RigRefs } from "./CharacterModels";
 
 // ---------------- Tipos del controlador ----------------
 
@@ -110,7 +114,8 @@ function computeJoints(c: AnimContext): Joints {
   const j = J();
   const kind = animKind(s, c.match);
   const speed = Math.sqrt(s.vx * s.vx + s.vz * s.vz);
-  const movingForward = Math.sign(s.vx) !== -s.facing;
+  const amp = clamp01(speed / 6.2);
+  const id = s.characterId;
 
   // Postura base de combate.
   j.armRx = -1.1 - Math.sin(t * 2.4) * 0.06;
@@ -120,20 +125,69 @@ function computeJoints(c: AnimContext): Joints {
   j.kneeL = 0.1;
   j.kneeR = 0.1;
 
+  // Guardia y presencia propios de cada luchador.
+  if (kind === "idle") {
+    if (id === "vulcan") {
+      // Guardia alta de boxeador, listo para encadenar.
+      j.armRx = -1.28 - Math.sin(t * 2.4) * 0.05;
+      j.armLz = 0.3 + Math.sin(t * 2.4) * 0.03;
+      j.armRz = 0.1;
+      j.spineX = 0.07;
+      j.elbowL = 0.9;
+      j.elbowR = 1;
+      j.crouch = 0.02;
+    } else if (id === "kestrel") {
+      // Postura larga de kickboxer: piernas más escalonadas y guardia alta.
+      j.armRx = -1.35 - Math.sin(t * 2.3) * 0.05;
+      j.armLz = 0.12;
+      j.armRz = -0.12;
+      j.legL = 0.22;
+      j.legR = -0.26;
+      j.kneeL = 0.18;
+      j.kneeR = 0.18;
+      j.spineX = -0.02;
+    } else if (id === "bolt") {
+      // Peso muerto con guardia abierta y amenazante.
+      j.armRx = -0.72;
+      j.armLz = 0.42;
+      j.armRz = 0.34;
+      j.legL = 0.34;
+      j.legR = -0.34;
+      j.kneeL = 0.16;
+      j.kneeR = 0.16;
+      j.spineX = 0.03;
+    } else {
+      // Viva y asimétrica: nunca queda quieta.
+      j.armRx = -1.32;
+      j.armLz = 0.5;
+      j.armRz = 0.16;
+      j.armRx = -1.32 - Math.sin(t * 3.1) * 0.03;
+      j.legL = 0.06;
+      j.legR = -0.3;
+      j.kneeL = 0.2;
+      j.kneeR = 0.12;
+      j.crouch = 0.08;
+      j.spineX = Math.sin(t * 2.8) * 0.02;
+    }
+  }
+
   switch (kind) {
     case "walk": {
-      const amp = clamp01(speed / 6.2);
       const phase = t * (4 + speed * 2.2);
       const step = Math.sin(phase) * 0.62 * amp;
-      j.legL = 0.12 + step;
-      j.legR = -0.12 + step;
-      j.kneeL = 0.1 + Math.max(0, -step) * 0.5;
-      j.kneeR = 0.1 + Math.max(0, step) * 0.5;
-      j.armRx = -1.1 - step * 0.28;
-      j.armLz = 0.1 - step * 0.22;
-      j.spineX = 0.08 * amp;
-      if (Math.abs(s.vz) > 0.6) j.pivotRoll = 0.22 * Math.sign(s.vz) * amp;
+      const stepScale = id === "bolt" ? 0.8 : id === "ash" ? 1.12 : 1;
+      const sStep = step * stepScale;
+      j.legL = 0.12 + sStep;
+      j.legR = -0.12 + sStep;
+      j.kneeL = 0.1 + Math.max(0, -sStep) * 0.5;
+      j.kneeR = 0.1 + Math.max(0, sStep) * 0.5;
+      j.armRx = (id === "bolt" ? -1.05 : -1.1) - sStep * 0.3;
+      j.armLz = (id === "bolt" ? 0.36 : 0.18) - sStep * 0.22;
+      if (id === "bolt") j.armRz = 0.3;
+      j.spineX = 0.08 * amp + (id === "bolt" ? 0.05 : 0);
+      const movingForward = Math.sign(s.vx) !== -s.facing;
       if (!movingForward) j.spineX = -0.1;
+      if (Math.abs(s.vz) > 0.6) j.pivotRoll = 0.22 * Math.sign(s.vz) * amp;
       break;
     }
     case "jump":
@@ -144,7 +198,7 @@ function computeJoints(c: AnimContext): Joints {
       j.footL = 0.9;
       j.footR = 0.9;
       j.armRx = -1.7;
-      j.armRz = 0.5;
+      j.armRz = id === "bolt" ? 0.8 : 0.5;
       break;
     case "fall":
       j.spineX = -0.3;
@@ -155,37 +209,38 @@ function computeJoints(c: AnimContext): Joints {
       j.legR = -0.4;
       j.kneeL = 0.4;
       j.kneeR = 0.4;
-      j.pivotRoll = Math.sin(t * 14) * 0.12;
+      j.pivotRoll = Math.sin(t * 14) * (id === "ash" ? 0.18 : 0.12);
       break;
     case "block":
-      j.armRz = 0.55;
-      j.armRx = -1.85;
+      j.armRz = id === "bolt" ? 0.8 : 0.55;
+      j.armRx = id === "bolt" ? -1.6 : -1.85;
       j.elbowR = 1.1;
-      j.armLz = 0.5;
+      j.armLz = id === "bolt" ? 0.75 : 0.5;
       j.spineX = -0.12;
       j.headX = -0.15;
-      j.kneeL = 0.3;
-      j.kneeR = 0.3;
+      j.kneeL = id === "bolt" ? 0.4 : 0.3;
+      j.kneeR = id === "bolt" ? 0.4 : 0.3;
       break;
     case "crouch":
       j.crouch = 1;
       j.kneeL = 1.25;
       j.kneeR = 1.25;
-      j.legL = 0.45;
-      j.legR = -0.45;
-      j.spineX = 0.22;
-      j.armRz = 0.62;
-      j.armRx = -1.9;
-      j.armLz = 0.56;
+      j.legL = id === "bolt" ? 0.55 : 0.45;
+      j.legR = id === "bolt" ? -0.55 : -0.45;
+      j.spineX = id === "bolt" ? 0.14 : 0.22;
+      j.armRz = id === "bolt" ? 0.8 : 0.62;
+      j.armRx = id === "bolt" ? -1.6 : -1.9;
+      j.armLz = id === "bolt" ? 0.7 : 0.56;
       j.elbowR = 0.9;
       j.headX = 0.1;
       break;
     case "dodge": {
       const p = clamp01(s.dodgeTicks / 18);
-      j.pivotRoll = 0.55 * p * Math.sign(s.vx || s.vz || 1);
+      const roll = id === "ash" ? 0.85 : id === "bolt" ? 0.34 : 0.55;
+      j.pivotRoll = roll * p * Math.sign(s.vx || s.vz || 1);
       j.spineX = 0.2 * p;
-      j.kneeL = 0.9 * p;
-      j.kneeR = 0.9 * p;
+      j.kneeL = (id === "ash" ? 1.25 : 0.9) * p;
+      j.kneeR = (id === "ash" ? 1.25 : 0.9) * p;
       j.armRz = 0.7 * p;
       j.armRx = -2 * p;
       break;
@@ -229,13 +284,29 @@ function computeJoints(c: AnimContext): Joints {
       break;
     }
     case "victory": {
-      j.armRz = 1.45;
-      j.armRx = -2.35;
-      j.armLz = -1.45;
-      j.armRx = -2.35;
-      j.headX = -0.12;
-      j.spineX = -0.16;
-      j.pivotRoll = Math.sin(t * 3) * 0.06;
+      if (id === "bolt") {
+        j.armRz = -1.35;
+        j.armRx = -2.5;
+        j.armLz = -1.35;
+        j.headX = -0.08;
+        j.spineX = -0.18;
+        j.pivotRoll = Math.sin(t * 3) * 0.06;
+      } else if (id === "kestrel") {
+        j.armRz = 0.9;
+        j.armRx = -1.6;
+        j.armLz = -0.5;
+        j.legL = 0.5;
+        j.headX = -0.1;
+        j.spineX = -0.14;
+        j.pivotRoll = Math.sin(t * 3) * 0.08;
+      } else {
+        j.armRz = 1.45;
+        j.armRx = -2.35;
+        j.armLz = -1.45;
+        j.headX = -0.12;
+        j.spineX = -0.16;
+        j.pivotRoll = Math.sin(t * 3) * 0.06;
+      }
       break;
     }
     case "defeat": {
@@ -256,20 +327,20 @@ function computeJoints(c: AnimContext): Joints {
     case "light":
     case "heavy": {
       const p = attackProgress(s);
-      j.armRz = 0.12;
+      j.armRz = id === "bolt" ? 0.4 : 0.12;
       j.armRx = -1.35 + p * 3.1;
       j.elbowR = 0.1 + (1 - p) * 0.8;
       j.spineX = 0.28 * clamp01(p);
-      j.armLz = 0.62;
-      j.armLz = 0.62;
+      j.armLz = id === "bolt" ? 0.5 : 0.62;
       j.legL = 0.3;
       j.legR = -0.3;
       break;
     }
     case "kick": {
       const p = attackProgress(s);
+      const reach = id === "kestrel" ? 2.2 : id === "bolt" ? 1.7 : 1.9;
       j.spineX = -0.55 * clamp01(p);
-      j.legR = p * 1.9;
+      j.legR = p * reach;
       j.kneeR = 0.05 + (1 - p) * 1.5;
       j.armRz = 0.75;
       j.armRx = -2;
@@ -280,8 +351,9 @@ function computeJoints(c: AnimContext): Joints {
     }
     case "grab": {
       const p = attackProgress(s);
+      const reach = id === "bolt" ? 3.1 : 2.6;
       j.armRz = 0;
-      j.armRx = -1.6 + p * 2.6;
+      j.armRx = -1.6 + p * reach;
       j.armLz = 0;
       j.elbowR = 0.4 + (1 - p);
       j.elbowL = 0.4 + (1 - p);
@@ -293,11 +365,6 @@ function computeJoints(c: AnimContext): Joints {
       break;
     }
     default:
-      // idle: respiración ligera y guardia.
-      j.armRz = -0.05;
-      j.armRx = -1.1 - Math.sin(t * 2.4) * 0.06;
-      j.armLz = 0.18 + Math.sin(t * 2.4) * 0.04;
-      j.spineX = Math.sin(t * 1.9) * 0.02;
       break;
   }
 
@@ -312,20 +379,22 @@ interface Props {
 }
 
 export function Fighter({ state, match }: Props) {
-  const root = useRef<THREE.Group>(null);
-  const pivot = useRef<THREE.Group>(null);
-  const chest = useRef<THREE.Mesh>(null);
-  const head = useRef<THREE.Group>(null);
-  const armL = useRef<THREE.Group>(null);
-  const armR = useRef<THREE.Group>(null);
-  const forearmR = useRef<THREE.Group>(null);
-  const forearmL = useRef<THREE.Group>(null);
-  const legL = useRef<THREE.Group>(null);
-  const legR = useRef<THREE.Group>(null);
-  const shinL = useRef<THREE.Group>(null);
-  const shinR = useRef<THREE.Group>(null);
-  const footL = useRef<THREE.Group>(null);
-  const footR = useRef<THREE.Group>(null);
+  const rootRef = useRef<THREE.Group>(null);
+  const refs: RigRefs = {
+    pivot: useRef<THREE.Group>(null),
+    chest: useRef<THREE.Mesh>(null),
+    head: useRef<THREE.Group>(null),
+    armL: useRef<THREE.Group>(null),
+    armR: useRef<THREE.Group>(null),
+    forearmL: useRef<THREE.Group>(null),
+    forearmR: useRef<THREE.Group>(null),
+    legL: useRef<THREE.Group>(null),
+    legR: useRef<THREE.Group>(null),
+    shinL: useRef<THREE.Group>(null),
+    shinR: useRef<THREE.Group>(null),
+    footL: useRef<THREE.Group>(null),
+    footR: useRef<THREE.Group>(null),
+  };
   const t = useRef(0);
 
   const char: CharacterDef = getCharacter(state.current.characterId);
@@ -338,12 +407,13 @@ export function Fighter({ state, match }: Props) {
     const delta = Math.min(rawDelta, 0.05);
     const s = state.current;
     const m = match.current;
-    if (!root.current || !pivot.current || !s || !m) return;
+    if (!rootRef.current || !refs.pivot.current || !s || !m) return;
     t.current += delta;
 
-    root.current.position.set(s.x, s.y, s.z);
+    rootRef.current.position.set(s.x, s.y, s.z);
     const targetYaw = s.facing === 1 ? Math.PI / 2 : -Math.PI / 2;
-    root.current.rotation.y += (targetYaw - root.current.rotation.y) * (1 - Math.exp(-14 * delta));
+    rootRef.current.rotation.y +=
+      (targetYaw - rootRef.current.rotation.y) * (1 - Math.exp(-14 * delta));
 
     // Controlador de animación: pose objetivo -> suavizado -> aplicado.
     const target = computeJoints({ t: t.current, s, match: m });
@@ -354,444 +424,50 @@ export function Fighter({ state, match }: Props) {
       cur[k] += (target[k] - cur[k]) * blend;
     });
 
-    pivot.current.rotation.set(cur.pivotPitch, 0, cur.pivotRoll);
-    pivot.current.scale.set(1, 1 - cur.crouch * 0.16, 1);
-    pivot.current.position.y = 0.02 + Math.abs(s.vx) * 0.004 + (s.downTicks > 0 ? -0.05 : 0);
+    const pivot = refs.pivot.current;
+    pivot.rotation.set(cur.pivotPitch, 0, cur.pivotRoll);
+    pivot.scale.set(1, 1 - cur.crouch * 0.16, 1);
+    pivot.position.y = 0.02 + Math.abs(s.vx) * 0.004 + (s.downTicks > 0 ? -0.05 : 0);
 
-    if (chest.current) chest.current.rotation.x = cur.spineX;
-    if (head.current) head.current.rotation.x = cur.headX + (s.hitstun > 0 ? -0.3 : 0);
+    if (refs.chest.current) refs.chest.current.rotation.x = cur.spineX;
+    if (refs.head.current) refs.head.current.rotation.x = cur.headX + (s.hitstun > 0 ? -0.3 : 0);
 
-    if (armL.current) {
-      armL.current.rotation.z = cur.armLz;
-      armL.current.rotation.x = cur.armRx;
+    if (refs.armL.current) {
+      refs.armL.current.rotation.z = cur.armLz;
+      refs.armL.current.rotation.x = cur.armRx;
     }
-    if (armR.current) {
-      armR.current.rotation.z = -cur.armRz;
-      armR.current.rotation.x = cur.armRx;
+    if (refs.armR.current) {
+      refs.armR.current.rotation.z = -cur.armRz;
+      refs.armR.current.rotation.x = cur.armRx;
     }
-    if (forearmL.current) forearmL.current.rotation.x = cur.elbowL;
-    if (forearmR.current) forearmR.current.rotation.x = -cur.elbowR;
+    if (refs.forearmL.current) refs.forearmL.current.rotation.x = cur.elbowL;
+    if (refs.forearmR.current) refs.forearmR.current.rotation.x = -cur.elbowR;
 
-    if (legL.current) legL.current.rotation.x = cur.legL;
-    if (legR.current) legR.current.rotation.x = cur.legR;
-    if (shinL.current) shinL.current.rotation.x = cur.kneeL;
-    if (shinR.current) shinR.current.rotation.x = cur.kneeR;
-    if (footL.current) footL.current.rotation.x = cur.footL;
-    if (footR.current) footR.current.rotation.x = cur.footR;
+    if (refs.legL.current) refs.legL.current.rotation.x = cur.legL;
+    if (refs.legR.current) refs.legR.current.rotation.x = cur.legR;
+    if (refs.shinL.current) refs.shinL.current.rotation.x = cur.kneeL;
+    if (refs.shinR.current) refs.shinR.current.rotation.x = cur.kneeR;
+    if (refs.footL.current) refs.footL.current.rotation.x = cur.footL;
+    if (refs.footR.current) refs.footR.current.rotation.x = cur.footR;
 
     // Flash de impacto y retroceso del material del pecho.
     const hit = s.flash > 0 ? s.flash / 8 : 0;
-    if (chest.current) {
-      const mat = chest.current.material as THREE.MeshStandardMaterial;
+    if (refs.chest.current) {
+      const mat = refs.chest.current.material as THREE.MeshStandardMaterial;
       mat.emissiveIntensity = 0.4 + hit * 3.4;
       mat.color.lerpColors(suit.current, white.current, hit * 0.7);
     }
   });
 
-  const isBoxer = char.archetype === "Boxer";
-  const isKickboxer = char.archetype === "Kickboxer";
-  const isGrappler = char.archetype === "Grappler";
-  const isStreet = char.archetype === "Street Fighter";
-
-  const mat = (
-    color: string,
-    emissive?: string,
-    opts?: { roughness?: number; metalness?: number; emissiveIntensity?: number },
-  ): THREE.MeshStandardMaterialParameters => ({
-    color,
-    emissive: emissive ?? (opts?.emissiveIntensity ? color : "#000000"),
-    emissiveIntensity: opts?.emissiveIntensity ?? (emissive ? 1.4 : 0),
-    roughness: opts?.roughness ?? 0.55,
-    metalness: opts?.metalness ?? 0.2,
-  });
-
-  const matEl = (
-    color: string,
-    emissive?: string,
-    opts?: { roughness?: number; metalness?: number; emissiveIntensity?: number },
-  ) => <meshStandardMaterial {...mat(color, emissive, opts)} />;
-
   return (
-    <group ref={root}>
-      <group ref={pivot}>
-        {/* Cadera / Trunks / Shorts de lucha */}
-        <mesh position={[0, 1.0, 0]} castShadow>
-          {matEl(char.colors.pants, undefined, { roughness: 0.7, metalness: 0.1 })}
-          <boxGeometry args={[0.34, 0.26, 0.22]} />
-        </mesh>
-        {/* Rayas neon laterales de los shorts */}
-        <mesh position={[-0.175, 1.0, 0]} castShadow>
-          {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.2 })}
-          <boxGeometry args={[0.015, 0.22, 0.14]} />
-        </mesh>
-        <mesh position={[0.175, 1.0, 0]} castShadow>
-          {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.2 })}
-          <boxGeometry args={[0.015, 0.22, 0.14]} />
-        </mesh>
-
-        {/* Cinturón de luchador / Cinturón de campeonato */}
-        <mesh position={[0, 1.07, 0]} castShadow>
-          {matEl("#141418", undefined, { roughness: 0.4, metalness: 0.3 })}
-          <boxGeometry args={[0.36, 0.09, 0.24]} />
-        </mesh>
-        <mesh position={[0, 1.07, 0.125]} castShadow>
-          {matEl(char.colors.trim, undefined, { roughness: 0.25, metalness: 0.8 })}
-          <boxGeometry args={[isGrappler ? 0.16 : 0.12, isGrappler ? 0.11 : 0.08, 0.02]} />
-        </mesh>
-        <mesh position={[0, 1.07, 0.136]}>
-          {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 2.2 })}
-          <boxGeometry args={[0.05, 0.05, 0.01]} />
-        </mesh>
-
-        {/* Lazo del cinturón de artes marciales (Street Fighter) */}
-        {isStreet && (
-          <group position={[0.07, 0.98, 0.13]} rotation={[0, 0, -0.15]}>
-            <mesh castShadow>
-              {matEl(char.colors.trim)}
-              <boxGeometry args={[0.035, 0.16, 0.015]} />
-            </mesh>
-          </group>
-        )}
-
-        {/* Tórax atlético con pecho esculpido */}
-        <mesh ref={chest} position={[0, 1.34, 0]} castShadow>
-          {matEl(char.colors.suit, undefined, { roughness: 0.6, metalness: 0.2 })}
-          <capsuleGeometry args={[isGrappler ? 0.29 : 0.26, isGrappler ? 0.38 : 0.34, 8, 16]} />
-        </mesh>
-        {/* Pectorales esculpidos en relieve */}
-        <mesh position={[-0.09, 1.42, 0.14]} rotation={[0.08, -0.1, 0.02]} castShadow>
-          {matEl(char.colors.suit, undefined, { roughness: 0.5, metalness: 0.25 })}
-          <boxGeometry args={[0.15, 0.14, 0.09]} />
-        </mesh>
-        <mesh position={[0.09, 1.42, 0.14]} rotation={[0.08, 0.1, -0.02]} castShadow>
-          {matEl(char.colors.suit, undefined, { roughness: 0.5, metalness: 0.25 })}
-          <boxGeometry args={[0.15, 0.14, 0.09]} />
-        </mesh>
-        {/* Abdomen atlético / definición muscular */}
-        <mesh position={[0, 1.25, 0.13]} castShadow>
-          {matEl(char.colors.skin, undefined, { roughness: 0.75, metalness: 0.05 })}
-          <boxGeometry args={[0.18, 0.16, 0.05]} />
-        </mesh>
-        <mesh position={[0, 1.25, 0.156]}>
-          {matEl("#000000", undefined, { roughness: 0.9 })}
-          <boxGeometry args={[0.015, 0.14, 0.01]} />
-        </mesh>
-
-        {/* Arnés / Líneas de neon en el pecho */}
-        <mesh position={[0, 1.48, 0.19]} castShadow>
-          {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.6 })}
-          <boxGeometry args={[0.3, 0.04, 0.04]} />
-        </mesh>
-        {/* Columna cibernética en la espalda */}
-        <mesh position={[0, 1.34, -0.16]} castShadow>
-          {matEl("#101014", undefined, { roughness: 0.3, metalness: 0.7 })}
-          <boxGeometry args={[0.08, 0.3, 0.04]} />
-        </mesh>
-        <mesh position={[0, 1.34, -0.185]}>
-          {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.5 })}
-          <boxGeometry args={[0.03, 0.22, 0.02]} />
-        </mesh>
-
-        {/* Hombros / Trapecios atléticos */}
-        <mesh position={[0, 1.57, 0]} castShadow>
-          {matEl(char.colors.suit, undefined, { roughness: 0.55, metalness: 0.3 })}
-          <boxGeometry args={[isGrappler ? 0.6 : 0.52, 0.22, 0.3]} />
-        </mesh>
-        {/* Cuello atlético */}
-        <mesh position={[0, 1.71, 0]} castShadow>
-          {matEl(char.colors.skin, undefined, { roughness: 0.8, metalness: 0.05 })}
-          <cylinderGeometry args={[0.09, 0.12, 0.14, 12]} />
-        </mesh>
-
-        {/* Cabeza del luchador */}
-        <group ref={head} position={[0, 1.88, 0]}>
-          {/* Rostro y mandíbula */}
-          <mesh castShadow>
-            {matEl(char.colors.skin, undefined, { roughness: 0.8, metalness: 0.05 })}
-            <sphereGeometry args={[0.18, 18, 16]} />
-          </mesh>
-          <mesh position={[0, -0.07, 0.05]} castShadow>
-            {matEl(char.colors.skin, undefined, { roughness: 0.8, metalness: 0.05 })}
-            <boxGeometry args={[0.13, 0.1, 0.14]} />
-          </mesh>
-          {/* Peinado estilizado de luchador */}
-          <mesh position={[0, 0.11, -0.02]} castShadow>
-            {matEl(char.colors.hair, undefined, { roughness: 0.9, metalness: 0.1 })}
-            <boxGeometry args={[0.22, 0.12, 0.22]} />
-          </mesh>
-          {/* Cresta / mechones de combate */}
-          <mesh position={[0, 0.17, 0.03]} rotation={[0.2, 0, 0]} castShadow>
-            {matEl(char.colors.hair, undefined, { roughness: 0.9, metalness: 0.1 })}
-            <coneGeometry args={[0.07, 0.12, 6]} />
-          </mesh>
-          {/* Coleta para Kickboxer (Kestrel) */}
-          {isKickboxer && (
-            <mesh position={[0, 0.12, -0.16]} rotation={[-0.4, 0, 0]} castShadow>
-              {matEl(char.colors.hair, undefined, { roughness: 0.9 })}
-              <coneGeometry args={[0.06, 0.24, 6]} />
-            </mesh>
-          )}
-          {/* Cinta de combate / Headband alrededor de la frente */}
-          <mesh position={[0, 0.04, 0]} castShadow>
-            {matEl(
-              isStreet ? char.colors.trim : char.colors.accent,
-              isStreet ? undefined : char.colors.accent,
-              {
-                roughness: 0.5,
-                emissiveIntensity: isStreet ? 0 : 0.8,
-              },
-            )}
-            <boxGeometry args={[0.38, 0.045, 0.38]} />
-          </mesh>
-          {/* Cintas traseras flotantes de la cinta de combate (Ash / Street) */}
-          {isStreet && (
-            <group position={[0, 0.04, -0.2]} rotation={[0.3, 0, 0]}>
-              <mesh position={[-0.04, -0.08, 0]} rotation={[0, 0, -0.15]}>
-                {matEl(char.colors.trim)}
-                <boxGeometry args={[0.03, 0.18, 0.01]} />
-              </mesh>
-              <mesh position={[0.04, -0.09, 0]} rotation={[0, 0, 0.12]}>
-                {matEl(char.colors.trim)}
-                <boxGeometry args={[0.03, 0.2, 0.01]} />
-              </mesh>
-            </group>
-          )}
-          {/* Visor cyber / Ojos brillantes de luchador */}
-          <mesh position={[0, 0.02, 0.16]}>
-            {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 2.4 })}
-            <boxGeometry args={[0.22, 0.05, 0.06]} />
-          </mesh>
-          {/* Auriculares / Implantes tácticos laterales */}
-          <mesh position={[-0.185, 0.01, 0]} rotation={[0, 0, Math.PI / 2]}>
-            {matEl("#141418", char.colors.accent, {
-              roughness: 0.3,
-              metalness: 0.8,
-              emissiveIntensity: 0.6,
-            })}
-            <cylinderGeometry args={[0.035, 0.035, 0.02, 8]} />
-          </mesh>
-          <mesh position={[0.185, 0.01, 0]} rotation={[0, 0, Math.PI / 2]}>
-            {matEl("#141418", char.colors.accent, {
-              roughness: 0.3,
-              metalness: 0.8,
-              emissiveIntensity: 0.6,
-            })}
-            <cylinderGeometry args={[0.035, 0.035, 0.02, 8]} />
-          </mesh>
-        </group>
-
-        {/* Brazo Izquierdo */}
-        <group ref={armL} position={[-0.35, 1.56, 0]}>
-          {/* Hombrera / Deltoide */}
-          <mesh castShadow>
-            {matEl(char.colors.suit, undefined, { roughness: 0.5, metalness: 0.3 })}
-            <sphereGeometry args={[0.11, 10, 8]} />
-          </mesh>
-          <group position={[0, -0.22, 0]}>
-            {/* Bíceps musculoso de piel con brazalete */}
-            <mesh castShadow>
-              {matEl(char.colors.skin, undefined, { roughness: 0.75, metalness: 0.05 })}
-              <capsuleGeometry args={[0.08, 0.32, 6, 12]} />
-            </mesh>
-            <mesh position={[0, 0.06, 0]}>
-              {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.3 })}
-              <cylinderGeometry args={[0.088, 0.088, 0.03, 12]} />
-            </mesh>
-            <group ref={forearmL} position={[0, -0.38, 0]}>
-              {/* Antebrazo con vendaje de combate */}
-              <mesh castShadow>
-                {matEl(char.colors.suit, undefined, { roughness: 0.6, metalness: 0.2 })}
-                <capsuleGeometry args={[0.075, 0.28, 6, 12]} />
-              </mesh>
-              {/* Muñequera / Cierre del guante */}
-              <mesh position={[0, -0.24, 0]} castShadow>
-                {matEl(char.colors.trim, undefined, { roughness: 0.4, metalness: 0.5 })}
-                <cylinderGeometry args={[0.09, 0.085, 0.08, 12]} />
-              </mesh>
-              {/* GUANTE DE PELEA (Boxeo / MMA / Grappler) */}
-              <mesh position={[0, -0.36, 0.02]} castShadow>
-                {matEl(char.colors.gloves, undefined, { roughness: 0.45, metalness: 0.2 })}
-                <capsuleGeometry args={[isBoxer ? 0.115 : 0.095, isBoxer ? 0.16 : 0.12, 8, 14]} />
-              </mesh>
-              {/* Nudillos con placa de impacto neon */}
-              <mesh position={[0, -0.39, 0.07]}>
-                {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 2.0 })}
-                <boxGeometry args={[isBoxer ? 0.14 : 0.11, 0.04, 0.04]} />
-              </mesh>
-            </group>
-          </group>
-        </group>
-
-        {/* Brazo Derecho */}
-        <group ref={armR} position={[0.35, 1.56, 0]}>
-          {/* Hombrera / Deltoide */}
-          <mesh castShadow>
-            {matEl(char.colors.suit, undefined, { roughness: 0.5, metalness: 0.3 })}
-            <sphereGeometry args={[0.11, 10, 8]} />
-          </mesh>
-          <group position={[0, -0.22, 0]}>
-            {/* Bíceps musculoso de piel con brazalete */}
-            <mesh castShadow>
-              {matEl(char.colors.skin, undefined, { roughness: 0.75, metalness: 0.05 })}
-              <capsuleGeometry args={[0.08, 0.32, 6, 12]} />
-            </mesh>
-            <mesh position={[0, 0.06, 0]}>
-              {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.3 })}
-              <cylinderGeometry args={[0.088, 0.088, 0.03, 12]} />
-            </mesh>
-            <group ref={forearmR} position={[0, -0.38, 0]}>
-              {/* Antebrazo con vendaje de combate */}
-              <mesh castShadow>
-                {matEl(char.colors.suit, undefined, { roughness: 0.6, metalness: 0.2 })}
-                <capsuleGeometry args={[0.075, 0.28, 6, 12]} />
-              </mesh>
-              {/* Muñequera / Cierre del guante */}
-              <mesh position={[0, -0.24, 0]} castShadow>
-                {matEl(char.colors.trim, undefined, { roughness: 0.4, metalness: 0.5 })}
-                <cylinderGeometry args={[0.09, 0.085, 0.08, 12]} />
-              </mesh>
-              {/* GUANTE DE PELEA (Boxeo / MMA / Grappler) */}
-              <mesh position={[0, -0.36, 0.02]} castShadow>
-                {matEl(char.colors.gloves, undefined, { roughness: 0.45, metalness: 0.2 })}
-                <capsuleGeometry args={[isBoxer ? 0.115 : 0.095, isBoxer ? 0.16 : 0.12, 8, 14]} />
-              </mesh>
-              {/* Nudillos con placa de impacto neon */}
-              <mesh position={[0, -0.39, 0.07]}>
-                {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 2.0 })}
-                <boxGeometry args={[isBoxer ? 0.14 : 0.11, 0.04, 0.04]} />
-              </mesh>
-            </group>
-          </group>
-        </group>
-
-        {/* Pierna Izquierda */}
-        <group ref={legL} position={[-0.15, 0.98, 0]}>
-          {/* Muslo con pantalón / shorts de lucha */}
-          <mesh position={[0, -0.24, 0]} castShadow>
-            {matEl(char.colors.pants, undefined, { roughness: 0.7, metalness: 0.1 })}
-            <capsuleGeometry args={[0.12, 0.36, 6, 12]} />
-          </mesh>
-          {/* Franja neon lateral en el muslo */}
-          <mesh position={[-0.12, -0.24, 0]}>
-            {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.4 })}
-            <boxGeometry args={[0.015, 0.3, 0.06]} />
-          </mesh>
-          {/* Rodillera de combate */}
-          <mesh position={[0, -0.42, 0.04]} castShadow>
-            {matEl(char.colors.trim, undefined, { roughness: 0.3, metalness: 0.6 })}
-            <sphereGeometry args={[0.08, 8, 6]} />
-          </mesh>
-          <group ref={shinL} position={[0, -0.42, 0]}>
-            {/* Canilla / Pantorrilla */}
-            <mesh position={[0, -0.28, 0]} castShadow>
-              {matEl(char.colors.pants, undefined, { roughness: 0.7, metalness: 0.1 })}
-              <capsuleGeometry args={[0.095, 0.36, 6, 12]} />
-            </mesh>
-            {/* Espinillera de combate */}
-            <mesh position={[0, -0.24, 0.07]} castShadow>
-              {matEl(char.colors.suit, undefined, { roughness: 0.4, metalness: 0.4 })}
-              <boxGeometry args={[0.1, 0.26, 0.03]} />
-            </mesh>
-            <mesh position={[0, -0.24, 0.086]}>
-              {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.5 })}
-              <boxGeometry args={[0.02, 0.2, 0.01]} />
-            </mesh>
-            {/* BOTA DE COMBATE / LUCHA */}
-            <group ref={footL} position={[0, -0.48, 0.04]}>
-              {/* Cuello alto de la bota */}
-              <mesh position={[0, 0.05, -0.02]} castShadow>
-                {matEl(char.colors.suit, undefined, { roughness: 0.5, metalness: 0.3 })}
-                <cylinderGeometry args={[0.1, 0.095, 0.12, 10]} />
-              </mesh>
-              {/* Empeine y cuerpo de la bota */}
-              <mesh position={[0, -0.02, 0.04]} castShadow>
-                {matEl("#121216", undefined, { roughness: 0.5, metalness: 0.3 })}
-                <boxGeometry args={[0.13, 0.1, 0.26]} />
-              </mesh>
-              {/* Puntera reforzada */}
-              <mesh position={[0, -0.01, 0.12]} castShadow>
-                {matEl(char.colors.trim, undefined, { roughness: 0.3, metalness: 0.7 })}
-                <boxGeometry args={[0.12, 0.07, 0.1]} />
-              </mesh>
-              {/* Suela de alto agarre con reborde neon */}
-              <mesh position={[0, -0.065, 0.04]} castShadow>
-                {matEl("#08080a", undefined, { roughness: 0.9, metalness: 0.1 })}
-                <boxGeometry args={[0.14, 0.03, 0.28]} />
-              </mesh>
-              <mesh position={[0, -0.06, -0.06]}>
-                {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 2.0 })}
-                <boxGeometry args={[0.12, 0.015, 0.04]} />
-              </mesh>
-            </group>
-          </group>
-        </group>
-
-        {/* Pierna Derecha */}
-        <group ref={legR} position={[0.15, 0.98, 0]}>
-          {/* Muslo con pantalón / shorts de lucha */}
-          <mesh position={[0, -0.24, 0]} castShadow>
-            {matEl(char.colors.pants, undefined, { roughness: 0.7, metalness: 0.1 })}
-            <capsuleGeometry args={[0.12, 0.36, 6, 12]} />
-          </mesh>
-          {/* Franja neon lateral en el muslo */}
-          <mesh position={[0.12, -0.24, 0]}>
-            {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.4 })}
-            <boxGeometry args={[0.015, 0.3, 0.06]} />
-          </mesh>
-          {/* Rodillera de combate */}
-          <mesh position={[0, -0.42, 0.04]} castShadow>
-            {matEl(char.colors.trim, undefined, { roughness: 0.3, metalness: 0.6 })}
-            <sphereGeometry args={[0.08, 8, 6]} />
-          </mesh>
-          <group ref={shinR} position={[0, -0.42, 0]}>
-            {/* Canilla / Pantorrilla */}
-            <mesh position={[0, -0.28, 0]} castShadow>
-              {matEl(char.colors.pants, undefined, { roughness: 0.7, metalness: 0.1 })}
-              <capsuleGeometry args={[0.095, 0.36, 6, 12]} />
-            </mesh>
-            {/* Espinillera de combate */}
-            <mesh position={[0, -0.24, 0.07]} castShadow>
-              {matEl(char.colors.suit, undefined, { roughness: 0.4, metalness: 0.4 })}
-              <boxGeometry args={[0.1, 0.26, 0.03]} />
-            </mesh>
-            <mesh position={[0, -0.24, 0.086]}>
-              {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 1.5 })}
-              <boxGeometry args={[0.02, 0.2, 0.01]} />
-            </mesh>
-            {/* BOTA DE COMBATE / LUCHA */}
-            <group ref={footR} position={[0, -0.48, 0.04]}>
-              {/* Cuello alto de la bota */}
-              <mesh position={[0, 0.05, -0.02]} castShadow>
-                {matEl(char.colors.suit, undefined, { roughness: 0.5, metalness: 0.3 })}
-                <cylinderGeometry args={[0.1, 0.095, 0.12, 10]} />
-              </mesh>
-              {/* Empeine y cuerpo de la bota */}
-              <mesh position={[0, -0.02, 0.04]} castShadow>
-                {matEl("#121216", undefined, { roughness: 0.5, metalness: 0.3 })}
-                <boxGeometry args={[0.13, 0.1, 0.26]} />
-              </mesh>
-              {/* Puntera reforzada */}
-              <mesh position={[0, -0.01, 0.12]} castShadow>
-                {matEl(char.colors.trim, undefined, { roughness: 0.3, metalness: 0.7 })}
-                <boxGeometry args={[0.12, 0.07, 0.1]} />
-              </mesh>
-              {/* Suela de alto agarre con reborde neon */}
-              <mesh position={[0, -0.065, 0.04]} castShadow>
-                {matEl("#08080a", undefined, { roughness: 0.9, metalness: 0.1 })}
-                <boxGeometry args={[0.14, 0.03, 0.28]} />
-              </mesh>
-              <mesh position={[0, -0.06, -0.06]}>
-                {matEl(char.colors.accent, char.colors.accent, { emissiveIntensity: 2.0 })}
-                <boxGeometry args={[0.12, 0.015, 0.04]} />
-              </mesh>
-            </group>
-          </group>
-        </group>
+    <group ref={rootRef}>
+      <group ref={refs.pivot}>
+        <CharacterModel char={char} rig={refs} />
       </group>
 
       {/* Sombra de contacto dinámica que atenúa suavemente con la altura del luchador */}
       <mesh rotation-x={-Math.PI / 2} position={[0, 0.02, 0]}>
-        <circleGeometry args={[0.48, 24]} />
+        <circleGeometry args={[shadowRadius(char.id), 24]} />
         <meshBasicMaterial
           color="#000000"
           transparent

@@ -4,12 +4,14 @@ import { audio } from "../../game/audio/AudioManager";
 
 export function MainMenu({
   onPlay,
+  onOnline,
   onStats,
   onHistory,
   onOptions,
   onControls,
 }: {
   onPlay: () => void;
+  onOnline: () => void;
   onStats: () => void;
   onHistory: () => void;
   onOptions: () => void;
@@ -22,11 +24,24 @@ export function MainMenu({
   };
 
   const items = [
-    { label: "PELEAR", desc: "Selecciona luchador, rival y escenario", fn: onPlay, confirm: true },
-    { label: "ESTADÍSTICAS", desc: "Récord, rango y rating", fn: onStats, confirm: false },
-    { label: "HISTORIAL", desc: "Combates anteriores", fn: onHistory, confirm: false },
-    { label: "OPCIONES", desc: "Audio y gráficos", fn: onOptions, confirm: false },
-    { label: "CONTROLES", desc: "Remapea tus teclas", fn: onControls, confirm: false },
+    {
+      label: "MULTIJUGADOR ONLINE",
+      desc: "Salas 1v1 en tiempo real mediante código",
+      fn: onOnline,
+      confirm: true,
+      highlight: true,
+    },
+    {
+      label: "VS CPU (SOLITARIO)",
+      desc: "Selecciona luchador, rival y escenario",
+      fn: onPlay,
+      confirm: true,
+      highlight: false,
+    },
+    { label: "ESTADÍSTICAS", desc: "Récord, rango y rating", fn: onStats, confirm: false, highlight: false },
+    { label: "HISTORIAL", desc: "Combates anteriores", fn: onHistory, confirm: false, highlight: false },
+    { label: "OPCIONES", desc: "Audio y gráficos", fn: onOptions, confirm: false, highlight: false },
+    { label: "CONTROLES", desc: "Remapea tus teclas", fn: onControls, confirm: false, highlight: false },
   ] as const;
 
   return (
@@ -49,10 +64,25 @@ export function MainMenu({
             key={it.label}
             type="button"
             onClick={() => click(it.fn, it.confirm ? "menuConfirm" : "menu")}
-            className="group relative overflow-hidden rounded-sm border border-border/70 bg-card/60 px-6 py-3.5 text-left transition hover:border-hud-stamina/80 hover:bg-card hover:shadow-neon"
+            className={`group relative overflow-hidden rounded-sm border px-6 py-3.5 text-left transition ${
+              it.highlight
+                ? "border-hud-stamina/80 bg-hud-stamina/10 shadow-neon hover:bg-hud-stamina/20"
+                : "border-border/70 bg-card/60 hover:border-hud-stamina/80 hover:bg-card hover:shadow-neon"
+            }`}
           >
+            {it.highlight && (
+              <span className="absolute top-2 right-2 rounded bg-hud-stamina px-1.5 py-0.5 text-[8px] font-black tracking-widest text-background uppercase shadow-neon">
+                1V1 ONLINE
+              </span>
+            )}
             <div className="flex items-baseline justify-between">
-              <span className="font-display text-lg tracking-[0.3em] text-foreground transition group-hover:text-hud-stamina">
+              <span
+                className={`font-display text-lg tracking-[0.3em] transition ${
+                  it.highlight
+                    ? "text-hud-stamina font-bold"
+                    : "text-foreground group-hover:text-hud-stamina"
+                }`}
+              >
                 {it.label}
               </span>
               <span className="text-sm text-hud-timer/60">»</span>

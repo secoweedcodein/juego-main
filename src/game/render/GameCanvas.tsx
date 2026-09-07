@@ -1,11 +1,11 @@
 // Bucle principal: tick fijo 60 Hz, input -> simulación -> render.
-// Integra: pausa (ESC), audio conectado a eventos reales, VFX y el registro
-// de progresión al terminar el combate.
+// Integra: soporte offline (vs CPU) y multijugador online (Supabase Realtime autoritativo),
+// pausa (ESC), audio conectado a eventos reales, VFX y el registro de progresión.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { createMatchState, stepMatch } from "../core/sim";
-import { EMPTY_INTENT, TICK_DT, TICK_RATE, type MatchState } from "../core/types";
+import { EMPTY_INTENT, TICK_DT, TICK_RATE, type MatchState, type FighterState } from "../core/types";
 import { KeyboardInput } from "../systems/input";
 import { DummyAI, type AiLevel } from "../systems/ai";
 import { Fighter } from "./Fighter";
@@ -21,6 +21,70 @@ import { loadKeymap } from "../config/keymap";
 import { recordMatch, type MatchSummary } from "../progression/storage";
 import { getCharacter } from "../data/characters";
 import { getStage } from "../data/stages";
+import {
+  connectGameChannel,
+  type MatchNetworkClient,
+  type MatchSnapshot,
+  type FighterSnapshot,
+} from "../online/gameChannel";
+import { updateRoomStatus } from "../online/rooms";
+import { ShieldCheck, Wifi } from "lucide-react";
+
+export interface OnlineMatchConfig {
+  roomId: string;
+  roomCode: string;
+  isHost: boolean;
+  onExitOnline: () => void;
+  onRematchOnline?: () => void;
+}
+
+function packFighter(f: FighterState): FighterSnapshot {
+  return {
+    x: f.x,
+    y: f.y,
+    z: f.z,
+    vx: f.vx,
+    vy: f.vy,
+    vz: f.vz,
+    facing: f.facing,
+    grounded: f.grounded,
+    crouching: f.crouching,
+    health: f.health,
+    stamina: f.stamina,
+    dodgeTicks: f.dodgeTicks,
+    hitstun: f.hitstun,
+    blockstun: f.blockstun,
+    blocking: f.blocking,
+    downTicks: f.downTicks,
+    getupTicks: f.getupTicks,
+    fallingOut: f.fallingOut,
+    flash: f.flash,
+    action: f.action ? { ...f.action } : null,
+  };
+}
+
+function applyFighterSnapshot(target: FighterState, snap: FighterSnapshot) {
+  target.x = snap.x;
+  target.y = snap.y;
+  target.z = snap.z;
+  target.vx = snap.vx;
+  target.vy = snap.vy;
+  target.vz = snap.vz;
+  target.facing = snap.facing;
+  target.grounded = snap.grounded;
+  target.crouching = snap.crouching;
+  target.health = snap.health;
+  target.stamina = snap.stamina;
+  target.dodgeTicks = snap.dodgeTicks;
+  target.hitstun = snap.hitstun;
+  target.blockstun = snap.blockstun;
+  target.blocking = snap.blocking;
+  target.downTicks = snap.downTicks;
+  target.getupTicks = snap.getupTicks;
+  target.fallingOut = snap.fallingOut;
+  target.flash = snap.flash;
+  target.action = snap.action ? { ...snap.action } : null;
+}
 
 /** Bucle de simulación independiente del render (rAF + tick fijo). */
 function useSimulationLoop(
@@ -28,6 +92,9 @@ function useSimulationLoop(
   input: React.RefObject<KeyboardInput>,
   ai: React.RefObject<DummyAI>,
   paused: React.RefObject<boolean>,
+  onlineConfig?: OnlineMatchConfig,
+  netClientRef?: React.RefObject<MatchNetworkClient | null>,
+  guestIntentRef?: React.RefObject<typeof EMPTY_INTENT>,
 ) {
   useEffect(() => {
     let raf = 0;
@@ -38,6 +105,8 @@ function useSimulationLoop(
     let prevJump = [] as boolean[];
     let prevFalling = [] as boolean[];
     let prevPhase = "";
+    let snapshotThrottle = 0;
+
     const loop = (now: number) => {
       const delta = Math.min((now - last) / 1000, 0.1);
       last = now;
@@ -52,6 +121,14 @@ function useSimulationLoop(
         return;
       }
 
+      // SI ES GUEST ONLINE: solo lee su propio input y lo envía al Host
+      if (onlineConfig && !onlineConfig.isHost) {
+        const p2Intent = input.current?.readIntent() ?? EMPTY_INTENT;
+        netClientRef?.current?.sendGuestIntent(p2Intent);
+        raf = requestAnimationFrame(loop);
+        return;
+      }
+
       let steps = 0;
       while (acc >= TICK_DT && steps < 6) {
         if (prevHealth.length === 0) {
@@ -61,22 +138,42 @@ function useSimulationLoop(
           prevFalling = m.fighters.map((f) => f.fallingOut);
           prevPhase = m.phase;
         }
-        const intent = input.current?.readIntent() ?? EMPTY_INTENT;
-        const foe = ai.current?.think(m.fighters[1], m.fighters[0]) ?? EMPTY_INTENT;
-        stepMatch(m, [intent, foe]);
+
+        // Host o Single Player
+        const p1Intent = input.current?.readIntent() ?? EMPTY_INTENT;
+        const p2Intent = onlineConfig
+          ? guestIntentRef?.current ?? EMPTY_INTENT
+          : ai.current?.think(m.fighters[1], m.fighters[0]) ?? EMPTY_INTENT;
+
+        stepMatch(m, [p1Intent, p2Intent]);
+
+        // Si es Host Online, enviar snapshot al Guest (cada ~2 ticks / 30Hz o en eventos)
+        if (onlineConfig && onlineConfig.isHost && netClientRef?.current) {
+          snapshotThrottle++;
+          if (snapshotThrottle >= 2 || m.events.length > 0 || m.phase !== prevPhase) {
+            snapshotThrottle = 0;
+            const snap: MatchSnapshot = {
+              tick: m.tick,
+              phase: m.phase,
+              announce: m.announce,
+              round: m.round,
+              timer: m.timer,
+              wins: [m.wins[0], m.wins[1]],
+              fighters: [packFighter(m.fighters[0]), packFighter(m.fighters[1])],
+              events: [...m.events],
+            };
+            netClientRef.current.sendHostSnapshot(snap);
+          }
+        }
 
         // Audio conectado a cambios reales de estado.
         const n = m.fighters;
         for (let i = 0; i < n.length; i++) {
           const f = n[i]!;
-          // KO del rival (salud llega a 0).
           if (f.health <= 0 && prevHealth[i]! > 0) audio.playSfx("ko");
-          // Esquiva.
           if (f.dodgeTicks > 0 && !prevDodge[i]!) audio.playSfx("dodge");
-          // Salto y aterrizaje.
           if (!f.grounded && prevJump[i]!) audio.playSfx("jump");
           if (f.grounded && !prevJump[i]! && f.y <= 0.01) audio.playSfx("land");
-          // Ring-out al agua.
           if (f.fallingOut && !prevFalling[i]!) audio.playSfx("ringout");
         }
         prevHealth = n.map((f) => f.health);
@@ -84,7 +181,7 @@ function useSimulationLoop(
         prevJump = n.map((f) => !f.grounded);
         prevFalling = n.map((f) => f.fallingOut);
 
-        // Sonidos de impacto de los eventos generados.
+        // Sonidos de impacto
         for (const e of m.events) {
           if (e.attackerId === "stage") {
             audio.playSfx("hitLight");
@@ -107,10 +204,10 @@ function useSimulationLoop(
           }
         }
 
-        // Fanfarria de victoria/derrota al llegar al matchEnd.
+        // Fanfarria de victoria/derrota
         if (m.phase === "matchEnd" && prevPhase !== "matchEnd") {
           const playerWon = m.wins[0] > m.wins[1];
-          audio.playSfx(playerWon ? "victory" : m.wins[0] === m.wins[1] ? "defeat" : "defeat");
+          audio.playSfx(playerWon ? "victory" : "defeat");
         }
         prevPhase = m.phase;
 
@@ -122,7 +219,7 @@ function useSimulationLoop(
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [match, input, ai, paused]);
+  }, [match, input, ai, paused, onlineConfig, netClientRef, guestIntentRef]);
 }
 
 export function GameCanvas({
@@ -133,6 +230,7 @@ export function GameCanvas({
   onExit,
   onRematch,
   onMenu,
+  onlineConfig,
 }: {
   playerCharacter?: string;
   opponentCharacter?: string;
@@ -141,6 +239,7 @@ export function GameCanvas({
   onExit?: () => void;
   onRematch?: () => void;
   onMenu: () => void;
+  onlineConfig?: OnlineMatchConfig;
 }) {
   const match = useRef<MatchState>(createMatchState(playerCharacter, opponentCharacter, stageId));
   const input = useRef<KeyboardInput>(new KeyboardInput(loadKeymap()));
@@ -153,20 +252,103 @@ export function GameCanvas({
   const recorded = useRef(false);
   const matchDuration = useRef(0);
   const settings = loadSettings();
+
+  // Gestión de red online
+  const netClientRef = useRef<MatchNetworkClient | null>(null);
+  const guestIntentRef = useRef(EMPTY_INTENT);
+  const [onlineNotice, setOnlineNotice] = useState<string | null>(null);
+
   audio.ensureInit();
 
-  useSimulationLoop(match, input, ai, pausedRef);
+  // Conexión al canal de juego en modo online
+  useEffect(() => {
+    if (!onlineConfig) return;
+
+    const net = connectGameChannel(onlineConfig.roomId);
+    netClientRef.current = net;
+
+    if (onlineConfig.isHost) {
+      // Host recibe intents de Guest
+      net.onGuestIntent((intent) => {
+        guestIntentRef.current = intent;
+      });
+      net.onMatchAction((action) => {
+        if (action === "rematch") {
+          setOnlineNotice("¡El rival solicitó revancha!");
+          onRematch?.();
+        } else if (action === "leave") {
+          setOnlineNotice("El rival abandonó la partida.");
+        }
+      });
+    } else {
+      // Guest recibe snapshots autoritativos de Host
+      let prevGuestPhase = "";
+      net.onHostSnapshot((snap) => {
+        const m = match.current;
+        if (!m) return;
+        m.phase = snap.phase;
+        m.announce = snap.announce;
+        m.round = snap.round;
+        m.timer = snap.timer;
+        m.wins = snap.wins;
+        m.events = snap.events;
+
+        applyFighterSnapshot(m.fighters[0], snap.fighters[0]);
+        applyFighterSnapshot(m.fighters[1], snap.fighters[1]);
+
+        // Reproducir audios recibidos
+        for (const e of snap.events) {
+          if (e.blocked) audio.playSfx("block");
+          else if (e.attackId === "heavy") audio.playSfx("hitHeavy");
+          else if (e.attackId === "kick") audio.playSfx("kick");
+          else audio.playSfx("hitLight");
+        }
+
+        if (snap.phase === "matchEnd" && prevGuestPhase !== "matchEnd") {
+          const guestWon = snap.wins[1] > snap.wins[0];
+          audio.playSfx(guestWon ? "victory" : "defeat");
+        }
+        prevGuestPhase = snap.phase;
+      });
+
+      net.onMatchAction((action) => {
+        if (action === "rematch") {
+          setOnlineNotice("¡El anfitrión reinició la partida!");
+          onRematch?.();
+        } else if (action === "leave") {
+          setOnlineNotice("El anfitrión abandonó la partida.");
+        }
+      });
+    }
+
+    return () => {
+      net.disconnect();
+      netClientRef.current = null;
+    };
+  }, [onlineConfig, onRematch]);
+
+  useSimulationLoop(
+    match,
+    input,
+    ai,
+    pausedRef,
+    onlineConfig,
+    netClientRef,
+    guestIntentRef,
+  );
 
   const togglePause = useCallback((value?: boolean) => {
+    // En multijugador online no se pausa el juego global
+    if (onlineConfig) return;
     setPaused((p) => {
       const next = value ?? !p;
       pausedRef.current = next;
       audio.setPaused(next);
       return next;
     });
-  }, []);
+  }, [onlineConfig]);
 
-  // Atrapa la tecla de pausa (configurable) y la vuelca a la AI.
+  // Atrapa la tecla de pausa (configurable)
   useEffect(() => {
     const kb = input.current;
     kb.attach(window);
@@ -175,7 +357,7 @@ export function GameCanvas({
     const onDown = (e: KeyboardEvent) => {
       if (pauseCodes.has(e.code)) {
         e.preventDefault();
-        if (!over) togglePause();
+        if (!over && !onlineConfig) togglePause();
       }
     };
     window.addEventListener("keydown", onDown);
@@ -185,15 +367,15 @@ export function GameCanvas({
         matchDuration.current = Math.round((m.tick / TICK_RATE) * 10) / 10;
         if (m.phaseTicks <= 0) setOver(true);
       }
-    }, 250);
+    }, 200);
     return () => {
       kb.dispose();
       window.removeEventListener("keydown", onDown);
       window.clearInterval(poll);
     };
-  }, [togglePause, over]);
+  }, [togglePause, over, onlineConfig]);
 
-  // Música del escenario + ambiente. Se detiene al salir.
+  // Música del escenario
   useEffect(() => {
     audio.ensureInit();
     audio.playMusic(stageId);
@@ -204,7 +386,7 @@ export function GameCanvas({
     };
   }, [stageId]);
 
-  // Registrar el resultado del combate (una sola vez, al terminar).
+  // Registrar resultado al terminar
   useEffect(() => {
     const poll = window.setInterval(() => {
       const m = match.current;
@@ -216,7 +398,7 @@ export function GameCanvas({
         opponentCharacter: m.fighters[1].characterId,
         stageId: m.stageId,
         result: winner === -1 ? "draw" : winner === 0 ? "win" : "loss",
-        aiLevel,
+        aiLevel: onlineConfig ? "pvp" : aiLevel,
         durationSeconds: matchDuration.current,
         roundsWon: m.wins[0],
         roundsLost: m.wins[1],
@@ -225,28 +407,81 @@ export function GameCanvas({
         ko: winner === 0 && m.announce === "K.O.",
       };
       recordMatch(summary);
+
+      // Si es online, actualizar estado en Supabase
+      if (onlineConfig && onlineConfig.isHost) {
+        const winnerChar =
+          winner === 0 ? playerCharacter : winner === 1 ? opponentCharacter : "draw";
+        updateRoomStatus(onlineConfig.roomId, "finished", winnerChar).catch(console.error);
+      }
     }, 250);
     return () => window.clearInterval(poll);
-  }, [aiLevel]);
+  }, [aiLevel, onlineConfig, opponentCharacter, playerCharacter]);
 
   const handleMenu = useCallback(() => {
+    if (onlineConfig) {
+      netClientRef.current?.sendMatchAction("leave");
+      onlineConfig.onExitOnline();
+      return;
+    }
     togglePause(false);
     onMenu();
-  }, [onMenu, togglePause]);
+  }, [onMenu, onlineConfig, togglePause]);
 
   const handleRematch = useCallback(() => {
+    if (onlineConfig) {
+      netClientRef.current?.sendMatchAction("rematch");
+      onRematch?.();
+      return;
+    }
     togglePause(false);
     onRematch?.();
-  }, [onRematch, togglePause]);
+  }, [onRematch, onlineConfig, togglePause]);
 
   const handleExit = useCallback(() => {
+    if (onlineConfig) {
+      netClientRef.current?.sendMatchAction("leave");
+      onlineConfig.onExitOnline();
+      return;
+    }
     onExit?.();
-  }, [onExit]);
+  }, [onExit, onlineConfig]);
 
   const stageColor = getStage(stageId).palette.primary;
+  const isOnlineGuest = onlineConfig && !onlineConfig.isHost;
+  const isP1Local = !isOnlineGuest;
+
+  // Determinar si el jugador local ganó
+  const localPlayerWon =
+    match.current.wins[isP1Local ? 0 : 1] > match.current.wins[isP1Local ? 1 : 0];
+  const isDraw = match.current.wins[0] === match.current.wins[1];
 
   return (
     <div className="fixed inset-0 bg-background">
+      {/* Badge indicador de sala online en pantalla */}
+      {onlineConfig && (
+        <aside 
+          aria-label="Información de sala online"
+          className="pointer-events-none absolute left-4 top-4 z-20 flex items-center gap-2 rounded-full border border-hud-stamina/50 bg-background/80 px-3.5 py-1 text-xs font-bold tracking-widest text-hud-stamina backdrop-blur-md"
+        >
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-hud-stamina opacity-75" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-hud-stamina" />
+          </span>
+          <Wifi className="h-3.5 w-3.5" />
+          <span>SALA {onlineConfig.roomCode}</span>
+          <span className="text-[10px] text-muted-foreground">
+            ({onlineConfig.isHost ? "ANFITRIÓN - P1" : "INVITADO - P2"})
+          </span>
+        </aside>
+      )}
+
+      {onlineNotice && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 rounded border border-hud-timer/80 bg-background/90 px-4 py-1.5 text-xs tracking-widest text-hud-timer shadow-neon backdrop-blur-md">
+          {onlineNotice}
+        </div>
+      )}
+
       <Canvas
         shadows={settings.shadows}
         dpr={[1, settings.quality === "low" ? 1 : settings.quality === "medium" ? 1.25 : 1.75]}
@@ -262,8 +497,8 @@ export function GameCanvas({
       </Canvas>
       <CoreHud match={match} />
 
-      {/* Pantalla de pausa */}
-      {paused && !over && (
+      {/* Pantalla de pausa (solo offline) */}
+      {paused && !over && !onlineConfig && (
         <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm">
           <div className="mb-6 font-display text-3xl tracking-[0.4em] text-hud-timer drop-shadow-[0_0_16px_currentColor]">
             PAUSA
@@ -291,45 +526,83 @@ export function GameCanvas({
               SALIR AL MENÚ
             </button>
           </div>
-          <div className="mt-8 w-64 text-center text-[0.65rem] uppercase tracking-[0.3em] text-muted-foreground">
-            Opciones de audio en el menú principal
-          </div>
         </div>
       )}
 
       {/* Resultado final */}
       {over && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/50">
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/70 backdrop-blur-md animate-in fade-in duration-300">
+          <div className="mb-2 text-xs uppercase tracking-[0.4em] text-muted-foreground">
+            {onlineConfig ? "RESULTADO DE LA SALA ONLINE" : "COMBATE FINALIZADO"}
+          </div>
+
+          <h2
+            className={`font-display text-5xl md:text-6xl tracking-[0.3em] font-black mb-6 drop-shadow-[0_0_24px_currentColor] ${
+              isDraw
+                ? "text-hud-timer"
+                : localPlayerWon
+                  ? "text-hud-stamina"
+                  : "text-hud-health"
+            }`}
+          >
+            {isDraw ? "EMPATE" : localPlayerWon ? "VICTORIA" : "DERROTA"}
+          </h2>
+
+          <div className="mb-8 flex items-center gap-6 rounded-lg border border-border/80 bg-card/80 px-8 py-4 backdrop-blur-sm">
+            <div className="text-center">
+              <div className="text-[10px] tracking-widest text-muted-foreground uppercase">
+                {isP1Local ? "TÚ (P1)" : "RIVAL (P1)"}
+              </div>
+              <div className="font-display text-xl font-bold text-hud-stamina">
+                {getCharacter(playerCharacter).name}
+              </div>
+              <div className="font-display text-3xl font-black">{match.current.wins[0]}</div>
+            </div>
+            <div className="font-display text-2xl font-light text-muted-foreground">VS</div>
+            <div className="text-center">
+              <div className="text-[10px] tracking-widest text-muted-foreground uppercase">
+                {!isP1Local ? "TÚ (P2)" : "RIVAL (P2)"}
+              </div>
+              <div className="font-display text-xl font-bold text-hud-health">
+                {getCharacter(opponentCharacter).name}
+              </div>
+              <div className="font-display text-3xl font-black">{match.current.wins[1]}</div>
+            </div>
+          </div>
+
           <div className="flex gap-3">
             <button
               type="button"
               onClick={handleRematch}
-              className="rounded-sm border border-hud-stamina bg-hud-stamina/10 px-6 py-2 font-display tracking-[0.25em] text-hud-stamina shadow-neon transition hover:bg-hud-stamina/20"
+              className="rounded-sm border border-hud-stamina bg-hud-stamina/10 px-6 py-2.5 font-display tracking-[0.25em] text-hud-stamina shadow-neon transition hover:bg-hud-stamina/20"
             >
               REVANCHA
             </button>
+            {!onlineConfig && (
+              <button
+                type="button"
+                onClick={handleExit}
+                className="rounded-sm border border-border bg-card/70 px-6 py-2.5 font-display tracking-[0.25em] text-foreground transition hover:bg-card"
+              >
+                SELECCIÓN
+              </button>
+            )}
             <button
               type="button"
-              onClick={handleExit}
-              className="rounded-sm border border-border bg-card/70 px-6 py-2 font-display tracking-[0.25em] text-foreground"
+              onClick={onlineConfig ? handleExit : handleMenu}
+              className="rounded-sm border border-hud-timer/70 bg-hud-timer/10 px-6 py-2.5 font-display tracking-[0.25em] text-hud-timer transition hover:bg-hud-timer/20"
             >
-              SELECCIÓN
-            </button>
-            <button
-              type="button"
-              onClick={handleMenu}
-              className="rounded-sm border border-hud-timer/70 bg-hud-timer/10 px-6 py-2 font-display tracking-[0.25em] text-hud-timer"
-            >
-              MENÚ
+              {onlineConfig ? "SALIR AL LOBBY" : "MENÚ"}
             </button>
           </div>
-          <div className="mt-3 text-[0.65rem] tracking-[0.25em] text-muted-foreground">
-            Resultado guardado en tu progreso — ver estadísticas en el menú
-          </div>
-          <div className="mt-1 flex items-center gap-2 text-[0.6rem] tracking-[0.2em] text-muted-foreground/70">
-            <span style={{ color: stageColor }}>{getCharacter(playerCharacter).name}</span>
-            <span>@</span>
-            <span>{getCharacter(opponentCharacter).name}</span>
+
+          <div className="mt-5 flex items-center gap-2 text-[0.65rem] tracking-[0.2em] text-muted-foreground/70">
+            <span style={{ color: stageColor }}>{getStage(stageId).name}</span>
+            <span>·</span>
+            <span className="flex items-center gap-1">
+              <ShieldCheck className="h-3 w-3 text-hud-stamina" />
+              Partida sincronizada
+            </span>
           </div>
         </div>
       )}

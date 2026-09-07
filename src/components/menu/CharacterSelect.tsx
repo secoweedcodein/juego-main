@@ -1,13 +1,24 @@
-// Pantalla de selección de personaje y dificultad (FASE 4).
+// Pantalla de selección de personaje y dificultad (FASE 4 / FASE 12 visual).
+// Cada tarjeta refuerza la identidad del luchador y el panel lateral muestra
+// el modelo 3D real girando (misma geometría que en combate).
 
 import { useState } from "react";
 import { CHARACTERS, type CharacterDef } from "../../game/data/characters";
 import type { AiLevel } from "../../game/systems/ai";
 import { STAGE_LIST } from "../../game/data/stages";
+import { FighterPreview } from "../../game/render/FighterPreview";
+import { Zap, Wind, Hammer, Crosshair, type LucideIcon } from "lucide-react";
 
 const ROSTER = Object.values(CHARACTERS);
 
-function StatBar({ label, value }: { label: string; value: number }) {
+const ICONS: Record<string, LucideIcon> = {
+  vulcan: Zap,
+  kestrel: Wind,
+  bolt: Hammer,
+  ash: Crosshair,
+};
+
+function StatBar({ label, value, tint }: { label: string; value: number; tint?: string }) {
   return (
     <div className="flex items-center gap-2">
       <span className="w-16 text-[10px] tracking-widest text-muted-foreground">{label}</span>
@@ -16,6 +27,7 @@ function StatBar({ label, value }: { label: string; value: number }) {
           <span
             key={i}
             className={`h-1.5 w-5 rounded-sm ${i < value ? "bg-hud-stamina" : "bg-muted"}`}
+            style={i < value && tint ? { background: tint } : undefined}
           />
         ))}
       </div>
@@ -34,28 +46,58 @@ function Portrait({
   tag?: string | undefined;
   onClick: () => void;
 }) {
+  const Icon = ICONS[char.id] ?? Zap;
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`group relative overflow-hidden rounded-md border px-3 py-4 text-left transition ${
+      className={`group relative overflow-hidden rounded-md border text-left transition ${
         selected
           ? "border-hud-stamina bg-card shadow-neon"
-          : "border-border/60 bg-card/50 hover:border-hud-stamina/60"
+          : "border-border/60 bg-card/50 hover:border-hud-stamina/60 hover:bg-card/70"
       }`}
-      style={{ borderLeftColor: char.colors.accent, borderLeftWidth: 3 }}
+      style={{
+        borderLeftColor: char.colors.accent,
+        borderLeftWidth: 3,
+        borderTopColor: selected ? char.colors.accent : undefined,
+      }}
     >
       {tag && (
-        <span className="absolute right-2 top-2 text-[10px] tracking-widest text-hud-stamina">
+        <span
+          className="absolute right-2 top-2 text-[10px] font-bold tracking-widest"
+          style={{ color: char.colors.accent }}
+        >
           {tag}
         </span>
       )}
+      {/* Banner de personaje: icono de arquetipo + silueta abstracta */}
       <div
-        className="mb-3 h-16 w-full rounded-sm"
+        className="relative mb-3 flex h-16 w-full items-center justify-center overflow-hidden rounded-sm"
         style={{
-          background: `linear-gradient(140deg, ${char.colors.suit}, ${char.colors.accent}55)`,
+          background: `radial-gradient(120% 100% at 50% 0%, ${char.colors.suit}, #05070d 85%)`,
         }}
-      />
+      >
+        <span
+          className="absolute -bottom-3 left-1/2 h-10 w-28 -translate-x-1/2 rounded-full opacity-25 blur-md"
+          style={{ background: char.colors.accent }}
+        />
+        <Icon
+          className="h-7 w-7 transition-transform group-hover:scale-110"
+          style={{ color: char.colors.accent }}
+        />
+        <span
+          className="absolute bottom-1 left-2 text-[0.6rem] uppercase tracking-[0.2em]"
+          style={{ color: char.colors.accent }}
+        >
+          {char.archetype === "Boxer"
+            ? "PRESIÓN"
+            : char.archetype === "Kickboxer"
+              ? "ALCANCE"
+              : char.archetype === "Grappler"
+                ? "PODER"
+                : "TÉCNICA"}
+        </span>
+      </div>
       <div className="font-display text-lg tracking-widest">{char.name}</div>
       <div className="text-[11px] uppercase tracking-widest text-muted-foreground">
         {char.archetype}
@@ -78,6 +120,7 @@ export function CharacterSelect({ onStart }: { onStart: (setup: MatchSetup) => v
   const [stage, setStage] = useState("neon");
   const pickedStage = STAGE_LIST.find((s) => s.id === stage) ?? STAGE_LIST[0]!;
   const pick = CHARACTERS[player]!;
+  const rival = CHARACTERS[opponent]!;
 
   return (
     <main className="min-h-screen bg-background px-6 py-10 text-foreground">
@@ -128,20 +171,38 @@ export function CharacterSelect({ onStart }: { onStart: (setup: MatchSetup) => v
         </section>
 
         <aside className="space-y-5 rounded-md border border-border/60 bg-card/60 p-5">
-          <div>
-            <div className="font-display text-2xl tracking-widest">{pick.name}</div>
-            <div className="text-[11px] uppercase tracking-widest text-muted-foreground">
-              {pick.archetype}
+          <FighterPreview characterId={player} className="h-56" />
+
+          <div className="flex items-center justify-between">
+            <div>
+              <div
+                className="font-display text-2xl tracking-widest"
+                style={{ color: pick.colors.accent }}
+              >
+                {pick.name}
+              </div>
+              <div className="text-[11px] uppercase tracking-widest text-muted-foreground">
+                {pick.archetype}
+              </div>
             </div>
-            <p className="mt-2 text-sm text-muted-foreground">{pick.description}</p>
+            <div className="text-right text-[0.6rem] uppercase tracking-[0.2em] text-muted-foreground">
+              vs
+              <div
+                className="font-display text-sm tracking-widest"
+                style={{ color: rival.colors.accent }}
+              >
+                {rival.name}
+              </div>
+            </div>
           </div>
+          <p className="text-sm leading-relaxed text-muted-foreground">{pick.description}</p>
 
           <div className="space-y-1.5">
-            <StatBar label="FUERZA" value={pick.stats.power} />
-            <StatBar label="VELOC." value={pick.stats.speed} />
-            <StatBar label="ALCANCE" value={pick.stats.range} />
-            <StatBar label="DEFENSA" value={pick.stats.defense} />
-            <StatBar label="TÉCNICA" value={pick.stats.tech} />
+            <StatBar label="FUERZA" value={pick.stats.power} tint={pick.colors.trim} />
+            <StatBar label="VELOC." value={pick.stats.speed} tint={pick.colors.accent} />
+            <StatBar label="ALCANCE" value={pick.stats.range} tint={pick.colors.accent} />
+            <StatBar label="DEFENSA" value={pick.stats.defense} tint={pick.colors.trim} />
+            <StatBar label="TÉCNICA" value={pick.stats.tech} tint={pick.colors.accent} />
           </div>
 
           <div>

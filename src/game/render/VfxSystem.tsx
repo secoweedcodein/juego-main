@@ -8,6 +8,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { FighterState, MatchState } from "../core/types";
 import { getAttack } from "../data/attacks";
+import { getCharacter } from "../data/characters";
 import { loadSettings } from "../config/settings";
 
 interface FxParticle {
@@ -220,7 +221,7 @@ export function VfxSystem({ match }: { match: React.RefObject<MatchState> }) {
             3.2,
             0,
             0.22,
-            f.characterId === "kestrel" ? MAGENTA : CYAN,
+            victoryColor(f.characterId),
             false,
             0.6,
           );
@@ -282,3 +283,14 @@ export function VfxSystem({ match }: { match: React.RefObject<MatchState> }) {
 
 const COLOR_RAMP = new THREE.Color("#ffffff");
 const KNOWN_ATTACKS = new Set(["light", "heavy", "kick", "grab"]);
+
+/** Color de victoria propio de cada luchador (cacheado). */
+const victoryColors = new Map<string, THREE.Color>();
+function victoryColor(characterId: string): THREE.Color {
+  let c = victoryColors.get(characterId);
+  if (!c) {
+    c = new THREE.Color(getCharacter(characterId).colors.accent);
+    victoryColors.set(characterId, c);
+  }
+  return c;
+}
