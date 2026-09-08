@@ -112,16 +112,18 @@ alter table public.matches enable row level security;
 
 -- --- POLÍTICAS RLS - SALAS ---
 
--- a) SELECT: cualquiera puede ver salas en espera; además, cada participante
---    puede leer su propia sala en cualquier estado (necesario para la sala activa).
-drop policy if exists "rooms_select_public_waiting" on public.rooms;
-create policy "rooms_select_public_waiting"
+-- a) SELECT: lectura PERMISIVA (using true) para toda la tabla rooms.
+--    ¿Por qué? El matchmaking y la sala de espera dependen de Supabase Realtime
+--    (postgres_changes) para sincronizar entre ventanas/dispositivos. Realtime NO
+--    propaga la cabecera HTTP `x-player-id` (solo evalúa el JWT anon), por lo que
+--    una política condicional filtraría las salas 'ready'/'playing'/'finished' y
+--    rompería la sincronización cross-device. Las salas son efímeras y no
+--    contienen datos sensibles; las escrituras sí siguen restringidas por RLS
+--    (UPDATE/DELETE solo para host/invitado).
+drop policy if exists "rooms_select_public" on public.rooms;
+create policy "rooms_select_public"
   on public.rooms for select
-  using (
-    status = 'waiting'
-    or host_id = public.current_player_id()
-    or guest_id = public.current_player_id()
-  );
+  using (true);
 
 -- b) INSERT: cualquiera puede crear una sala pública.
 drop policy if exists "rooms_insert_public" on public.rooms;

@@ -44,14 +44,42 @@ function broadcastLocalRoom(room: RoomData) {
   }
 }
 
-/** Crea una nueva sala */
+/** Crea una nueva sala (reintenta con códigos distintos si hay colisión). */
 export async function createRoom(character: string, stageId = "neon"): Promise<RoomData> {
   const playerId = getLocalPlayerId();
-  const code = generateRoomCode();
 
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const code = generateRoomCode();
+    try {
+      const { data, error } = await supabase
+        .from("rooms")
+        .insert({
+          code,
+          host_id: playerId,
+          host_character: character,
+          stage_id: stageId,
+          status: "waiting",
+          host_ready: false,
+          guest_ready: false,
+        })
+        .select()
+        .single();
+
+      if (!error && data) {
+        const room = data as RoomData;
+        broadcastLocalRoom(room);
+        return room;
+      }
+    } catch (err) {
+      console.warn("Supabase createRoom falló, usando modo P2P/Broadcast local:", err);
+    }
+  }
+
+  // Fallback local (último recurso; no se ve entre dispositivos)
+  const fallbackCode = generateRoomCode();
   const newRoom: RoomData = {
-    id: `local-${code}`,
-    code,
+    id: `local-${fallbackCode}`,
+    code: fallbackCode,
     host_id: playerId,
     host_character: character,
     guest_id: null,
@@ -62,32 +90,6 @@ export async function createRoom(character: string, stageId = "neon"): Promise<R
     status: "waiting",
     winner: null,
   };
-
-  try {
-    const { data, error } = await supabase
-      .from("rooms")
-      .insert({
-        code,
-        host_id: playerId,
-        host_character: character,
-        stage_id: stageId,
-        status: "waiting",
-        host_ready: false,
-        guest_ready: false,
-      })
-      .select()
-      .single();
-
-    if (!error && data) {
-      const room = data as RoomData;
-      broadcastLocalRoom(room);
-      return room;
-    }
-  } catch (err) {
-    console.warn("Supabase createRoom falló, usando modo P2P/Broadcast local:", err);
-  }
-
-  // Fallback local
   broadcastLocalRoom(newRoom);
   return newRoom;
 }
@@ -222,37 +224,55 @@ export async function findQuickMatch(character: string, stageId = "neon"): Promi
   return createRoom(character, stageId);
 }
 
-/** Cambia el estado 'listo' del jugador en la sala */
+/** Cambia el estado 'listo' del jugador en la sala.
+ *  Escribe SÓLO el flag propio (host_ready o guest_ready), para no sobrescribir
+ *  el del rival si ambos tocan el botón a la vez, y recalcula el estado global
+ *  de la sala a partir de la fila fresca devuelta por la BD. */
 export async function setPlayerReady(
   roomId: string,
   isHost: boolean,
   ready: boolean,
   currentRoom: RoomData,
 ): Promise<RoomData> {
-  const next: RoomData = {
-    ...currentRoom,
-    host_ready: isHost ? ready : currentRoom.host_ready,
-    guest_ready: !isHost ? ready : currentRoom.guest_ready,
-  };
+  try {
+    const ownColumn = isHost ? "host_ready" : "guest_ready";
+    const { data, error } = await supabase
+      .from("rooms")
+      .update({ [ownColumn]: ready })
+      .eq("id", roomId)
+      .select()
+      .single();
 
-  // Si ambos están listos y hay un invitado, pasa a 'ready' (o 'playing')
+    if (!error && data) {
+      const merged = data as RoomData;
+      // Estado global: si ambos están listos y hay invitado -> 'ready', si no -> 'waiting'.
+      const nextStatus: RoomData["status"] =
+        merged.host_ready && merged.guest_ready && merged.guest_id ? "ready" : "waiting";
+      if (merged.status !== nextStatus) {
+        const { data: updated } = await supabase
+          .from("rooms")
+          .update({ status: nextStatus })
+          .eq("id", roomId)
+          .select()
+          .single();
+        if (updated) merged.status = (updated as RoomData).status;
+      }
+      broadcastLocalRoom(merged);
+      return merged;
+    }
+  } catch (err) {
+    console.warn("setPlayerReady: fallo Supabase, usando modo local:", err);
+  }
+
+  // Fallback local
+  const next: RoomData = { ...currentRoom };
+  if (isHost) next.host_ready = ready;
+  else next.guest_ready = ready;
   if (next.host_ready && next.guest_ready && next.guest_id) {
     next.status = "ready";
   } else if (next.status === "ready") {
     next.status = "waiting";
   }
-
-  try {
-    const updatePayload: Partial<RoomData> = {
-      host_ready: next.host_ready,
-      guest_ready: next.guest_ready,
-      status: next.status,
-    };
-    await supabase.from("rooms").update(updatePayload).eq("id", roomId);
-  } catch {
-    // Ignorar fallo si estamos en fallback local
-  }
-
   broadcastLocalRoom(next);
   return next;
 }
@@ -307,6 +327,28 @@ export async function leaveRoom(roomId: string, isHost: boolean): Promise<void> 
       local.guest_ready = false;
       local.status = "waiting";
     }
+    broadcastLocalRoom(local);
+  }
+}
+
+/** Marca la sala como abandonada por desconexión SOLO si aún estaba jugándose.
+ *  Nunca pisa el resultado real de una partida ya terminada ('finished'),
+ *  ni las salas que aún están en espera. */
+export async function markRoomAbandoned(roomId: string): Promise<void> {
+  try {
+    const { data, error } = await supabase.from("rooms").select("status").eq("id", roomId).single();
+    if (error || !data) return;
+    const room = data as { status: string };
+    if (room.status !== "playing") return;
+    await updateRoomStatus(roomId, "finished", "abandon");
+  } catch {
+    // Ignorar (modo local)
+  }
+
+  const local = localRoomsStore.get(roomId);
+  if (local && local.status === "playing") {
+    local.status = "finished";
+    local.winner = "abandon";
     broadcastLocalRoom(local);
   }
 }

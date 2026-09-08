@@ -89,6 +89,15 @@ export function OnlineLobby({
     if (!currentRoom) return;
 
     const unsubscribe = subscribeToRoom(currentRoom.id, currentRoom.code, (updatedRoom) => {
+      // El otro jugador abandonó/cerró la sala en la sala de espera: salimos.
+      if (updatedRoom.status === "finished") {
+        const notMe = updatedRoom.host_id !== getLocalPlayerId();
+        setCurrentRoom(null);
+        setCountdown(null);
+        audio.playSfx("menu");
+        toast.warning(notMe ? "La sala se cerró: el otro jugador abandonó." : "Sala cerrada.");
+        return;
+      }
       setCurrentRoom(updatedRoom);
     });
 

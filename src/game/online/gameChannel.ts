@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import { updateRoomStatus } from "./rooms";
+import { markRoomAbandoned } from "./rooms";
 import type { InputIntent, MatchPhase, HitEvent, ActionState, Facing } from "../core/types";
 
 export interface FighterSnapshot {
@@ -27,6 +27,10 @@ export interface FighterSnapshot {
 
 export interface MatchSnapshot {
   tick: number;
+  /** ticks restantes de la fase actual (el guest no simula por su cuenta) */
+  phaseTicks: number;
+  /** daño acumulado causado por cada luchador (para el registro de estadísticas) */
+  damageDealt: [number, number];
   /** instante de emisión (ms, epoch) usado por la compensación de latencia */
   timestamp: number;
   phase: MatchPhase;
@@ -80,6 +84,28 @@ export function connectGameChannel(roomId: string, isHost: boolean): MatchNetwor
   let abandonmentHandled = false;
   let abandonTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // --- Dedupe transitorio ---
+  // En el mismo navegador (dos pestañas) cada mensaje llega DOS veces: una por
+  // Realtime y otra por el BroadcastChannel local. Evitamos aplicarlo/idempotencia
+  // doble comparando el tick (strictamente creciente) y repetidas de acciones.
+  let lastSnapshotTick = -1;
+  let lastAction: string | null = null;
+  let lastActionAt = 0;
+
+  const emitHostSnapshot = (snapshot: MatchSnapshot) => {
+    if (snapshot.tick <= lastSnapshotTick) return;
+    lastSnapshotTick = snapshot.tick;
+    hostSnapshotCallback?.(snapshot);
+  };
+
+  const emitMatchAction = (action: "rematch" | "leave" | "pause") => {
+    const now = Date.now();
+    if (lastAction === action && now - lastActionAt < 700) return;
+    lastAction = action;
+    lastActionAt = now;
+    matchActionCallback?.(action);
+  };
+
   // --- Presencia (detección de desconexiones) ---
   const currentRoles = (): Set<string> => {
     const roles = new Set<string>();
@@ -96,7 +122,7 @@ export function connectGameChannel(roomId: string, isHost: boolean): MatchNetwor
     if (abandonmentHandled) return;
     abandonmentHandled = true;
     console.warn("ONLINE: el rival se desconectó; la sala pasa a 'finished' con winner='abandon'.");
-    updateRoomStatus(roomId, "finished", "abandon").catch(console.error);
+    markRoomAbandoned(roomId).catch(console.error);
     opponentDisconnectCallback?.();
   };
 
@@ -133,10 +159,10 @@ export function connectGameChannel(roomId: string, isHost: boolean): MatchNetwor
       guestIntentCallback?.(payload.intent as InputIntent);
     })
     .on("broadcast", { event: "host_snapshot" }, ({ payload }) => {
-      hostSnapshotCallback?.(payload.snapshot as MatchSnapshot);
+      emitHostSnapshot(payload.snapshot as MatchSnapshot);
     })
     .on("broadcast", { event: "match_action" }, ({ payload }) => {
-      matchActionCallback?.(payload.action);
+      emitMatchAction(payload.action);
     })
     .subscribe((status) => {
       if (status === "SUBSCRIBED") {
@@ -153,9 +179,9 @@ export function connectGameChannel(roomId: string, isHost: boolean): MatchNetwor
     if (event === "guest_intent" && payload?.intent) {
       guestIntentCallback?.(payload.intent);
     } else if (event === "host_snapshot" && payload?.snapshot) {
-      hostSnapshotCallback?.(payload.snapshot);
+      emitHostSnapshot(payload.snapshot);
     } else if (event === "match_action" && payload?.action) {
-      matchActionCallback?.(payload.action);
+      emitMatchAction(payload.action);
     }
   };
   localBus?.addEventListener("message", onLocalMessage);

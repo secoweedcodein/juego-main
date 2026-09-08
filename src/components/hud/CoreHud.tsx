@@ -57,15 +57,23 @@ export function CoreHud({ match }: { match: React.RefObject<MatchState> }) {
 
   useEffect(() => {
     let mounted = true;
-    const loop = () => {
+    let timeoutId: number | null = null;
+    const tick = () => {
       if (!mounted) return;
       force((n) => (n + 1) % 1000);
-      raf.current = requestAnimationFrame(loop);
+      // En una pestaña en segundo plano Chrome pausa requestAnimationFrame;
+      // alternar a setTimeout para que el HUD (timer, vida) siga actualizándose.
+      if (document.hidden) {
+        timeoutId = window.setTimeout(tick, 66);
+      } else {
+        raf.current = requestAnimationFrame(tick);
+      }
     };
-    raf.current = requestAnimationFrame(loop);
+    raf.current = requestAnimationFrame(tick);
     return () => {
       mounted = false;
       cancelAnimationFrame(raf.current);
+      if (timeoutId !== null) clearTimeout(timeoutId);
     };
   }, []);
 

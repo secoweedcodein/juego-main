@@ -40,7 +40,9 @@ function createSupabaseClient(url: string, key: string): SupabaseClient {
     },
     realtime: {
       params: {
-        eventsPerSecond: 30,
+        // Límite de eventos Realtime por segundo. El guest envía un intent por
+        // frame (60 Hz) y el host ~30 snapshots/s; un límite de 30 los descartaría.
+        eventsPerSecond: 100,
       },
     },
     global: {

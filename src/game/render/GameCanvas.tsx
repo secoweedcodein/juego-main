@@ -3,7 +3,7 @@
 // pausa (ESC), audio conectado a eventos reales, VFX y el registro de progresión.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, advance } from "@react-three/fiber";
 import { createMatchState, stepMatch } from "../core/sim";
 import {
   EMPTY_INTENT,
@@ -48,6 +48,12 @@ export interface OnlineMatchConfig {
 /** Delay de entrada online: 2 frames a 60Hz (~33ms) para suavizar la sincronización. */
 const INPUT_DELAY_FRAMES = 2;
 const INPUT_DELAY_MS = Math.round((INPUT_DELAY_FRAMES / TICK_RATE) * 1000);
+
+/** Pasos máximos de simulación por frame y delta máximo por frame.
+ *  Permiten "ponerse al día" sin espiral cuando la pestaña estuvo en segundo
+ *  plano (los timers se espacian pero el tiempo real se conserva en `acc`). */
+const MAX_STEPS = 90;
+const MAX_FRAME_DT = 1;
 
 export interface BufferedInput {
   intent: InputIntent;
@@ -139,112 +145,118 @@ function useSimulationLoop(
     };
 
     const loop = (now: number) => {
-      const delta = Math.min((now - last) / 1000, 0.1);
+      // delta limitado a MAX_FRAME_DT segundos: en pestaña oculta el navegador
+      // espacia los timers, pero el tiempo real NO se pierde — queda en `acc`
+      // y se drena en MAX_STEPS pasos por frame (evita espiral de la muerte).
+      const delta = Math.min((now - last) / 1000, MAX_FRAME_DT);
       last = now;
       acc += delta;
       const m = match.current;
       const isPaused = paused.current;
-      if (!m) return;
 
-      if (isPaused) {
+      if (m && !isPaused) {
+        // SI ES GUEST ONLINE: solo lee su propio input y lo envía al Host
+        if (onlineConfig && !onlineConfig.isHost) {
+          acc = 0;
+          const p2Intent = input.current?.readIntent() ?? EMPTY_INTENT;
+          netClientRef?.current?.sendGuestIntent(p2Intent);
+        } else {
+          let steps = 0;
+          while (acc >= TICK_DT && steps < MAX_STEPS) {
+            if (prevHealth.length === 0) {
+              prevHealth = m.fighters.map((f) => f.health);
+              prevDodge = m.fighters.map((f) => f.dodgeTicks > 0);
+              prevJump = m.fighters.map((f) => !f.grounded);
+              prevFalling = m.fighters.map((f) => f.fallingOut);
+              prevPhase = m.phase;
+            }
+
+            const p1Intent = input.current?.readIntent() ?? EMPTY_INTENT;
+            const p2Intent = onlineConfig
+              ? resolveGuestIntent()
+              : (ai.current?.think(m.fighters[1], m.fighters[0]) ?? EMPTY_INTENT);
+
+            stepMatch(m, [p1Intent, p2Intent]);
+
+            // Host Online: enviar snapshot
+            if (onlineConfig && onlineConfig.isHost && netClientRef?.current) {
+              snapshotThrottle++;
+              if (snapshotThrottle >= 2 || m.events.length > 0 || m.phase !== prevPhase) {
+                snapshotThrottle = 0;
+                const snap: MatchSnapshot = {
+                  tick: m.tick,
+                  phaseTicks: m.phaseTicks,
+                  damageDealt: [m.damageDealt[0], m.damageDealt[1]],
+                  timestamp: Date.now(),
+                  phase: m.phase,
+                  announce: m.announce,
+                  round: m.round,
+                  timer: m.timer,
+                  wins: [m.wins[0], m.wins[1]],
+                  fighters: [packFighter(m.fighters[0]), packFighter(m.fighters[1])],
+                  events: [...m.events],
+                };
+                netClientRef.current.sendHostSnapshot(snap);
+              }
+            }
+
+            // Audio y efectos
+            const n = m.fighters;
+            for (let i = 0; i < n.length; i++) {
+              const f = n[i]!;
+              if (f.health <= 0 && prevHealth[i]! > 0) audio.playSfx("ko");
+              if (f.dodgeTicks > 0 && !prevDodge[i]!) audio.playSfx("dodge");
+              if (!f.grounded && prevJump[i]!) audio.playSfx("jump");
+              if (f.grounded && !prevJump[i]! && f.y <= 0.01) audio.playSfx("land");
+              if (f.fallingOut && !prevFalling[i]!) audio.playSfx("ringout");
+            }
+            prevHealth = n.map((f) => f.health);
+            prevDodge = n.map((f) => f.dodgeTicks > 0);
+            prevJump = n.map((f) => !f.grounded);
+            prevFalling = n.map((f) => f.fallingOut);
+
+            for (const e of m.events) {
+              if (e.attackerId === "stage") {
+                audio.playSfx("hitLight");
+                continue;
+              }
+              if (e.attackId.startsWith("throw-")) {
+                audio.playSfx("throw");
+                continue;
+              }
+              if (e.blocked) {
+                audio.playSfx("block");
+              } else if (e.attackId === "heavy") {
+                audio.playSfx("hitHeavy");
+              } else if (e.attackId === "kick") {
+                audio.playSfx("kick");
+              } else if (e.attackId === "grab") {
+                audio.playSfx("grab");
+              } else {
+                audio.playSfx("hitLight");
+              }
+            }
+
+            if (m.phase === "matchEnd" && prevPhase !== "matchEnd") {
+              const playerWon = m.wins[0] > m.wins[1];
+              audio.playSfx(playerWon ? "victory" : "defeat");
+            }
+            prevPhase = m.phase;
+
+            acc -= TICK_DT;
+            steps++;
+          }
+          if (steps >= MAX_STEPS) acc = 0;
+        }
+      } else {
         acc = 0;
-        scheduleNext();
-        return;
       }
 
-      // SI ES GUEST ONLINE: solo lee su propio input y lo envía al Host
-      if (onlineConfig && !onlineConfig.isHost) {
-        const p2Intent = input.current?.readIntent() ?? EMPTY_INTENT;
-        netClientRef?.current?.sendGuestIntent(p2Intent);
-        scheduleNext();
-        return;
-      }
-
-      let steps = 0;
-      while (acc >= TICK_DT && steps < 6) {
-        if (prevHealth.length === 0) {
-          prevHealth = m.fighters.map((f) => f.health);
-          prevDodge = m.fighters.map((f) => f.dodgeTicks > 0);
-          prevJump = m.fighters.map((f) => !f.grounded);
-          prevFalling = m.fighters.map((f) => f.fallingOut);
-          prevPhase = m.phase;
-        }
-
-        const p1Intent = input.current?.readIntent() ?? EMPTY_INTENT;
-        const p2Intent = onlineConfig
-          ? resolveGuestIntent()
-          : (ai.current?.think(m.fighters[1], m.fighters[0]) ?? EMPTY_INTENT);
-
-        stepMatch(m, [p1Intent, p2Intent]);
-
-        // Host Online: enviar snapshot
-        if (onlineConfig && onlineConfig.isHost && netClientRef?.current) {
-          snapshotThrottle++;
-          if (snapshotThrottle >= 2 || m.events.length > 0 || m.phase !== prevPhase) {
-            snapshotThrottle = 0;
-            const snap: MatchSnapshot = {
-              tick: m.tick,
-              timestamp: Date.now(),
-              phase: m.phase,
-              announce: m.announce,
-              round: m.round,
-              timer: m.timer,
-              wins: [m.wins[0], m.wins[1]],
-              fighters: [packFighter(m.fighters[0]), packFighter(m.fighters[1])],
-              events: [...m.events],
-            };
-            netClientRef.current.sendHostSnapshot(snap);
-          }
-        }
-
-        // Audio y efectos
-        const n = m.fighters;
-        for (let i = 0; i < n.length; i++) {
-          const f = n[i]!;
-          if (f.health <= 0 && prevHealth[i]! > 0) audio.playSfx("ko");
-          if (f.dodgeTicks > 0 && !prevDodge[i]!) audio.playSfx("dodge");
-          if (!f.grounded && prevJump[i]!) audio.playSfx("jump");
-          if (f.grounded && !prevJump[i]! && f.y <= 0.01) audio.playSfx("land");
-          if (f.fallingOut && !prevFalling[i]!) audio.playSfx("ringout");
-        }
-        prevHealth = n.map((f) => f.health);
-        prevDodge = n.map((f) => f.dodgeTicks > 0);
-        prevJump = n.map((f) => !f.grounded);
-        prevFalling = n.map((f) => f.fallingOut);
-
-        for (const e of m.events) {
-          if (e.attackerId === "stage") {
-            audio.playSfx("hitLight");
-            continue;
-          }
-          if (e.attackId.startsWith("throw-")) {
-            audio.playSfx("throw");
-            continue;
-          }
-          if (e.blocked) {
-            audio.playSfx("block");
-          } else if (e.attackId === "heavy") {
-            audio.playSfx("hitHeavy");
-          } else if (e.attackId === "kick") {
-            audio.playSfx("kick");
-          } else if (e.attackId === "grab") {
-            audio.playSfx("grab");
-          } else {
-            audio.playSfx("hitLight");
-          }
-        }
-
-        if (m.phase === "matchEnd" && prevPhase !== "matchEnd") {
-          const playerWon = m.wins[0] > m.wins[1];
-          audio.playSfx(playerWon ? "victory" : "defeat");
-        }
-        prevPhase = m.phase;
-
-        acc -= TICK_DT;
-        steps++;
-      }
-      if (steps === 6) acc = 0;
       scheduleNext();
+      // Render manual (frameloop="never"): no depende de rAF, así la pestaña
+      // en segundo plano sigue dibujando el combate aunque Chrome haya pausado
+      // requestAnimationFrame (mientras el navegador permita ejecutar timers).
+      advance(now);
     };
 
     // Función que decide si usar rAF o setTimeout
@@ -314,12 +326,20 @@ export function GameCanvas({
     const net = connectGameChannel(onlineConfig.roomId, onlineConfig.isHost);
     netClientRef.current = net;
 
-    // Aviso cuando la presencia detecta que el rival se desconectó.
+    let disposed = false;
+
+    // Aviso cuando la presencia detecta que el rival se desconectó y vuelta al lobby.
     net.onOpponentDisconnect(() => {
       setOnlineNotice("Tu rival se desconectó. La partida queda cerrada (abandon).");
+      window.setTimeout(() => {
+        if (!disposed) onlineConfig.onExitOnline();
+      }, 2500);
     });
 
     if (onlineConfig.isHost) {
+      // La sala pasa formalmente a combate en cuanto el host monta el escenario.
+      updateRoomStatus(onlineConfig.roomId, "playing").catch(console.error);
+
       // Host recibe intents de Guest y los mete en el buffer de latencia
       net.onGuestIntent((intent) => {
         const sentAt = intent.timestamp ?? Date.now();
@@ -333,6 +353,7 @@ export function GameCanvas({
           onRematch?.();
         } else if (action === "leave") {
           setOnlineNotice("El rival abandonó la partida.");
+          onlineConfig.onExitOnline();
         }
       });
     } else {
@@ -341,11 +362,14 @@ export function GameCanvas({
       net.onHostSnapshot((snap) => {
         const m = match.current;
         if (!m) return;
+        m.tick = snap.tick;
         m.phase = snap.phase;
+        m.phaseTicks = snap.phaseTicks;
         m.announce = snap.announce;
         m.round = snap.round;
         m.timer = snap.timer;
         m.wins = snap.wins;
+        m.damageDealt = [snap.damageDealt[0], snap.damageDealt[1]];
         m.events = snap.events;
 
         applyFighterSnapshot(m.fighters[0], snap.fighters[0]);
@@ -372,11 +396,13 @@ export function GameCanvas({
           onRematch?.();
         } else if (action === "leave") {
           setOnlineNotice("El anfitrión abandonó la partida.");
+          onlineConfig.onExitOnline();
         }
       });
     }
 
     return () => {
+      disposed = true;
       net.disconnect();
       netClientRef.current = null;
     };
@@ -443,22 +469,25 @@ export function GameCanvas({
       if (!m || m.phase !== "matchEnd" || recorded.current) return;
       recorded.current = true;
       const winner = m.wins[0] === m.wins[1] ? -1 : m.wins[0] > m.wins[1] ? 0 : 1;
+      // En online el guest es P2: su victoria es winner===1, su daño infligido el [1].
+      const isGuestOnline = Boolean(onlineConfig && !onlineConfig.isHost);
+      const localWinner = winner === -1 ? -1 : isGuestOnline ? (winner === 0 ? 1 : 0) : winner;
       const summary: MatchSummary = {
         playerCharacter: m.fighters[0].characterId,
         opponentCharacter: m.fighters[1].characterId,
         stageId: m.stageId,
-        result: winner === -1 ? "draw" : winner === 0 ? "win" : "loss",
+        result: localWinner === -1 ? "draw" : localWinner === 0 ? "win" : "loss",
         aiLevel: onlineConfig ? "pvp" : aiLevel,
         durationSeconds: matchDuration.current,
-        roundsWon: m.wins[0],
-        roundsLost: m.wins[1],
-        damageDealt: m.damageDealt[0],
-        damageTaken: m.damageDealt[1],
-        ko: winner === 0 && m.announce === "K.O.",
+        roundsWon: m.wins[isGuestOnline ? 1 : 0],
+        roundsLost: m.wins[isGuestOnline ? 0 : 1],
+        damageDealt: m.damageDealt[isGuestOnline ? 1 : 0],
+        damageTaken: m.damageDealt[isGuestOnline ? 0 : 1],
+        ko: localWinner === 0 && m.announce === "K.O.",
       };
       recordMatch(summary);
 
-      // Si es online, actualizar estado en Supabase
+      // Si es online, actualizar estado en Supabase (solo el host archiva el resultado)
       if (onlineConfig && onlineConfig.isHost) {
         const winnerChar =
           winner === 0 ? playerCharacter : winner === 1 ? opponentCharacter : "draw";
@@ -533,6 +562,7 @@ export function GameCanvas({
       )}
 
       <Canvas
+        frameloop="never"
         shadows={settings.shadows}
         dpr={[1, settings.quality === "low" ? 1 : settings.quality === "medium" ? 1.25 : 1.75]}
         camera={{ position: [0, 2.4, 12], fov: 52 }}
@@ -587,8 +617,9 @@ export function GameCanvas({
           </div>
 
           <h2
-            className={`font-display text-5xl md:text-6xl tracking-[0.3em] font-black mb-6 drop-shadow-[0_0_24px_currentColor] ${isDraw ? "text-hud-timer" : localPlayerWon ? "text-hud-stamina" : "text-hud-health"
-              }`}
+            className={`font-display text-5xl md:text-6xl tracking-[0.3em] font-black mb-6 drop-shadow-[0_0_24px_currentColor] ${
+              isDraw ? "text-hud-timer" : localPlayerWon ? "text-hud-stamina" : "text-hud-health"
+            }`}
           >
             {isDraw ? "EMPATE" : localPlayerWon ? "VICTORIA" : "DERROTA"}
           </h2>
