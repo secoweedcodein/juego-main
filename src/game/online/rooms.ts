@@ -111,21 +111,10 @@ export async function joinRoom(code: string, character: string): Promise<RoomDat
         return room as RoomData;
       }
 
-      const { data, error: updateError } = await supabase
-        .from("rooms")
-        .update({
-          guest_id: playerId,
-          guest_character: character,
-          guest_ready: false,
-        })
-        .eq("id", room.id)
-        .select()
-        .single();
-
-      if (!updateError && data) {
-        const updated = data as RoomData;
-        broadcastLocalRoom(updated);
-        return updated;
+      const claimed = await claimGuestSlot(room.id, playerId, character, ["waiting", "ready"]);
+      if (claimed) {
+        broadcastLocalRoom(claimed);
+        return claimed;
       }
     }
   } catch (err) {
@@ -158,6 +147,79 @@ export async function joinRoom(code: string, character: string): Promise<RoomDat
   };
   broadcastLocalRoom(fallbackRoom);
   return fallbackRoom;
+}
+
+/**
+ * Ocupa la plaza de invitado de una sala de forma atómica.
+ * Devuelve la sala actualizada o null si ya fue reclamada / ya no acepta invitados.
+ */
+async function claimGuestSlot(
+  roomId: string,
+  playerId: string,
+  character: string,
+  allowedStatus: ("waiting" | "ready")[],
+): Promise<RoomData | null> {
+  const { data, error } = await supabase
+    .from("rooms")
+    .update({
+      guest_id: playerId,
+      guest_character: character,
+      guest_ready: false,
+    })
+    .eq("id", roomId)
+    .in("status", allowedStatus)
+    .is("guest_id", null)
+    .select()
+    .single();
+
+  if (error) {
+    console.warn("No se pudo reclamar la plaza de invitado (¿carrera?):", error.message);
+    return null;
+  }
+  return (data ?? null) as RoomData | null;
+}
+
+/** Matchmaking automático: busca una sala en espera sin invitado.
+ *  Si la encuentra se une a ella; si no, crea una nueva y la deja en espera. */
+export async function findQuickMatch(character: string, stageId = "neon"): Promise<RoomData> {
+  const playerId = getLocalPlayerId();
+
+  // 1. Buscar en Supabase una sala abierta y reclamarla de forma atómica
+  try {
+    const { data: room, error } = await supabase
+      .from("rooms")
+      .select("*")
+      .eq("status", "waiting")
+      .is("guest_id", null)
+      .neq("host_id", playerId)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .single();
+
+    if (!error && room) {
+      const claimed = await claimGuestSlot(room.id, playerId, character, ["waiting"]);
+      if (claimed) {
+        broadcastLocalRoom(claimed);
+        return claimed;
+      }
+    }
+  } catch (err) {
+    console.warn("findQuickMatch: Supabase no disponible, usando modo local:", err);
+  }
+
+  // 2. Fallback local: alguna sala del BroadcastChannel aún sin invitado
+  for (const room of localRoomsStore.values()) {
+    if (room.status === "waiting" && !room.guest_id && room.host_id !== playerId) {
+      room.guest_id = playerId;
+      room.guest_character = character;
+      room.guest_ready = false;
+      broadcastLocalRoom(room);
+      return { ...room };
+    }
+  }
+
+  // 3. Sin rival disponible: crear una sala nueva y quedarse en espera
+  return createRoom(character, stageId);
 }
 
 /** Cambia el estado 'listo' del jugador en la sala */

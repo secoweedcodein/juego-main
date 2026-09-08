@@ -1,36 +1,68 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-// Claves por defecto o leídas de variables de entorno Vite
-const DEFAULT_URL =
-  (import.meta.env["VITE_SUPABASE_URL"] as string) ||
-  (typeof window !== "undefined" ? localStorage.getItem("nf_supabase_url") : null) ||
-  "https://bmafsninxqattzajjuvu.supabase.co";
+// Configuración estrictamente a través de variables de entorno Vite.
+// No hay credenciales hardcodeadas: esto es un requisito de seguridad.
+const supabaseUrl = import.meta.env["VITE_SUPABASE_URL"] as string | undefined;
+const supabaseAnonKey = import.meta.env["VITE_SUPABASE_ANON_KEY"] as string | undefined;
 
-const DEFAULT_KEY =
-  (import.meta.env["VITE_SUPABASE_ANON_KEY"] as string) ||
-  (typeof window !== "undefined" ? localStorage.getItem("nf_supabase_key") : null) ||
-  "sb_publishable_o_GM5wSJarKleGfHgpk7iQ_ET1PfQcv";
+export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseAnonKey);
 
-export let supabase: SupabaseClient = createClient(DEFAULT_URL, DEFAULT_KEY, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-  },
-  realtime: {
-    params: {
-      eventsPerSecond: 30,
+if (!hasSupabaseConfig) {
+  console.error(
+    "[Neon Fury Fight] ERROR DE CONFIGURACIÓN: faltan las variables de entorno de Supabase.\n" +
+      "Crea un archivo .env en la raíz del proyecto con los siguientes valores:\n" +
+      "  VITE_SUPABASE_URL=https://tu-proyecto.supabase.co\n" +
+      "  VITE_SUPABASE_ANON_KEY=tu-clave-anon-publica\n" +
+      "Sin ellas el modo online no podrá conectarse y usará el fallback local.",
+  );
+}
+
+export const PLAYER_ID_HEADER = "x-player-id";
+
+/** Añade la identidad del jugador local a cada petición para que las políticas RLS
+ *  (host_id / guest_id) puedan validar quién está escribiendo sobre una sala. */
+function withPlayerIdHeader(init?: RequestInit): RequestInit {
+  if (typeof window === "undefined" || typeof Headers === "undefined") {
+    return init ?? {};
+  }
+  const headers = new Headers(init?.headers);
+  if (!headers.has(PLAYER_ID_HEADER)) {
+    headers.set(PLAYER_ID_HEADER, getLocalPlayerId());
+  }
+  return { ...init, headers };
+}
+
+function createSupabaseClient(url: string, key: string): SupabaseClient {
+  return createClient(url, key, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
     },
-  },
-});
+    realtime: {
+      params: {
+        eventsPerSecond: 30,
+      },
+    },
+    global: {
+      fetch: (input: RequestInfo | URL, init?: RequestInit) =>
+        fetch(input, withPlayerIdHeader(init)),
+    },
+  });
+}
 
+// Si faltan las variables de entorno se usa un endpoint inválido a propósito:
+// el error quedará claro en consola y la app se degrada al modo local/P2P.
+export let supabase: SupabaseClient = hasSupabaseConfig
+  ? createSupabaseClient(supabaseUrl!, supabaseAnonKey!)
+  : createSupabaseClient("https://supabase.invalid", "anon-key-no-configurada");
+
+/** Reconfigura el cliente con credenciales suministradas en tiempo de ejecución
+ *  (por ejemplo desde la interfaz de configuración). Solo válido para la sesión
+ *  actual; la configuración por defecto siempre proviene de las variables de
+ *  entorno VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY. */
 export function reconfigureSupabase(url: string, key: string) {
   try {
-    localStorage.setItem("nf_supabase_url", url);
-    localStorage.setItem("nf_supabase_key", key);
-    supabase = createClient(url, key, {
-      auth: { persistSession: true },
-      realtime: { params: { eventsPerSecond: 30 } },
-    });
+    supabase = createSupabaseClient(url, key);
     return true;
   } catch (err) {
     console.error("Error al reconfigurar Supabase:", err);
@@ -72,10 +104,15 @@ export async function testSupabaseConnection(): Promise<{ ok: boolean; message: 
     const { error } = await supabase.from("rooms").select("id").limit(1);
     if (error) {
       // Si el error es 404 o no existe la tabla
-      if (error.code === "PGRST204" || error.message.includes("relation") || error.code === "42P01") {
+      if (
+        error.code === "PGRST204" ||
+        error.message.includes("relation") ||
+        error.code === "42P01"
+      ) {
         return {
           ok: false,
-          message: "Conectado a Supabase pero la tabla 'rooms' no existe. Ejecuta supabase-schema.sql.",
+          message:
+            "Conectado a Supabase pero la tabla 'rooms' no existe. Ejecuta supabase-schema.sql.",
         };
       }
       return { ok: false, message: error.message };

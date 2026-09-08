@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useTransition } from "react";
 import {
   createRoom,
   joinRoom,
+  findQuickMatch,
   setPlayerReady,
   leaveRoom,
   subscribeToRoom,
@@ -52,7 +53,7 @@ export function OnlineLobby({
   onBack: () => void;
   onStartMatch: (setup: OnlineMatchSetup) => void;
 }) {
-  const [tab, setTab] = useState<"create" | "join">("create");
+  const [tab, setTab] = useState<"create" | "join" | "quick">("create");
   const [selectedChar, setSelectedChar] = useState("ash");
   const [selectedStage, setSelectedStage] = useState("neon");
   const [inputCode, setInputCode] = useState("");
@@ -181,6 +182,26 @@ export function OnlineLobby({
     }
   };
 
+  const handleQuickMatch = async () => {
+    setLoading(true);
+    audio.playSfx("menuConfirm");
+    try {
+      const room = await findQuickMatch(selectedChar);
+      const joinedAsHost = room.host_id === getLocalPlayerId();
+      setCurrentRoom(room);
+      setIsHost(joinedAsHost);
+      toast.success(
+        joinedAsHost
+          ? `No había rival en línea. Tu sala ${room.code} quedó en espera.`
+          : `¡Partida rápida encontrada! Entrando a la sala ${room.code}.`,
+      );
+    } catch (err) {
+      toast.error("Error buscando partida rápida: " + String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleToggleReady = async () => {
     if (!currentRoom) return;
     audio.playSfx("menuConfirm");
@@ -239,7 +260,9 @@ export function OnlineLobby({
     const isLocalReady = isHost ? currentRoom.host_ready : currentRoom.guest_ready;
     const isOpponentReady = isHost ? currentRoom.guest_ready : currentRoom.host_ready;
     const hasOpponent = Boolean(currentRoom.guest_id);
-    const myChar = isHost ? currentRoom.host_character : currentRoom.guest_character || selectedChar;
+    const myChar = isHost
+      ? currentRoom.host_character
+      : currentRoom.guest_character || selectedChar;
     const opponentChar = isHost ? currentRoom.guest_character : currentRoom.host_character;
 
     return (
@@ -352,7 +375,9 @@ export function OnlineLobby({
                     ESPERANDO RIVAL...
                   </div>
                   <p className="max-w-xs text-xs tracking-wider text-muted-foreground/70">
-                    Pásale el código <span className="text-hud-stamina font-bold">{currentRoom.code}</span> a tu amigo para que se una a esta sala.
+                    Pásale el código{" "}
+                    <span className="text-hud-stamina font-bold">{currentRoom.code}</span> a tu
+                    amigo para que se una a esta sala.
                   </p>
                 </div>
               ) : (
@@ -396,7 +421,8 @@ export function OnlineLobby({
               <Radio className="h-5 w-5 text-hud-stamina animate-pulse" />
               <div>
                 <div className="text-xs font-bold tracking-widest uppercase text-foreground">
-                  Escenario: {STAGE_LIST.find((s) => s.id === currentRoom.stage_id)?.name ?? "Distrito Neón"}
+                  Escenario:{" "}
+                  {STAGE_LIST.find((s) => s.id === currentRoom.stage_id)?.name ?? "Distrito Neón"}
                 </div>
                 <div className="text-[11px] text-muted-foreground tracking-wider">
                   {hasOpponent
@@ -484,7 +510,8 @@ export function OnlineLobby({
           </div>
           <p className="text-xs text-muted-foreground mb-4">
             Si deseas usar tu propia base de datos Supabase, introduce tus credenciales aquí. Se
-            guardarán en tu navegador.
+            aplicarán durante esta sesión (la configuración por defecto se lee de las variables de
+            entorno del proyecto).
           </p>
           <div className="space-y-3">
             <div>
@@ -538,8 +565,8 @@ export function OnlineLobby({
           </p>
         </div>
 
-        {/* Pestañas: CREAR SALA vs UNIRSE */}
-        <div className="flex justify-center mb-8">
+        {/* Pestañas: CREAR SALA / BUSCAR PARTIDA RÁPIDA / UNIRSE */}
+        <div className="flex flex-wrap justify-center gap-2 mb-8">
           <div className="flex rounded-md border border-border/80 bg-card/60 p-1">
             <button
               type="button"
@@ -554,6 +581,21 @@ export function OnlineLobby({
               }`}
             >
               CREAR SALA
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                audio.playSfx("menu");
+                setTab("quick");
+              }}
+              className={`flex items-center gap-2 rounded px-6 py-2 font-display text-xs tracking-[0.25em] transition uppercase ${
+                tab === "quick"
+                  ? "bg-hud-health text-background font-bold shadow-neon"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              BUSCAR PARTIDA RÁPIDA
             </button>
             <button
               type="button"
@@ -666,6 +708,22 @@ export function OnlineLobby({
                 >
                   <Swords className="h-4 w-4" />
                   {loading ? "CREANDO..." : "CREAR SALA ONLINE"}
+                </button>
+              </div>
+            ) : tab === "quick" ? (
+              <div className="space-y-4 pt-2">
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  El matchmaking buscará automáticamente una sala en espera sin rival. Si la
+                  encuentra te unes al instante; si no, se creará una nueva sala para ti.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleQuickMatch}
+                  disabled={loading}
+                  className="w-full flex items-center justify-center gap-2 rounded-md bg-hud-health px-6 py-3.5 font-display text-sm font-bold tracking-[0.25em] text-background shadow-neon transition hover:bg-hud-health/90 uppercase disabled:opacity-50"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  {loading ? "BUSCANDO..." : "BUSCAR PARTIDA RÁPIDA"}
                 </button>
               </div>
             ) : (

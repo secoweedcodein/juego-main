@@ -20,6 +20,8 @@ export interface InputIntent {
   grab: boolean;
   /** recoger / lanzar objeto (FASE 6) */
   interact: boolean;
+  /** instante de emisión (ms, epoch) usado por la compensación de latencia online */
+  timestamp: number;
 }
 
 export const EMPTY_INTENT: InputIntent = {
@@ -34,6 +36,7 @@ export const EMPTY_INTENT: InputIntent = {
   kick: false,
   grab: false,
   interact: false,
+  timestamp: 0,
 };
 
 export interface ActionState {

@@ -5,7 +5,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { createMatchState, stepMatch } from "../core/sim";
-import { EMPTY_INTENT, TICK_DT, TICK_RATE, type MatchState, type FighterState } from "../core/types";
+import {
+  EMPTY_INTENT,
+  TICK_DT,
+  TICK_RATE,
+  type InputIntent,
+  type MatchState,
+  type FighterState,
+} from "../core/types";
 import { KeyboardInput } from "../systems/input";
 import { DummyAI, type AiLevel } from "../systems/ai";
 import { Fighter } from "./Fighter";
@@ -36,6 +43,15 @@ export interface OnlineMatchConfig {
   isHost: boolean;
   onExitOnline: () => void;
   onRematchOnline?: () => void;
+}
+
+/** Delay de entrada online: 2 frames a 60Hz (~33ms) para suavizar la sincronización. */
+const INPUT_DELAY_FRAMES = 2;
+const INPUT_DELAY_MS = Math.round((INPUT_DELAY_FRAMES / TICK_RATE) * 1000);
+
+export interface BufferedInput {
+  intent: InputIntent;
+  readyAt: number;
 }
 
 function packFighter(f: FighterState): FighterSnapshot {
@@ -94,7 +110,7 @@ function useSimulationLoop(
   paused: React.RefObject<boolean>,
   onlineConfig?: OnlineMatchConfig,
   netClientRef?: React.RefObject<MatchNetworkClient | null>,
-  guestIntentRef?: React.RefObject<typeof EMPTY_INTENT>,
+  guestInputBufferRef?: React.RefObject<BufferedInput[]>,
 ) {
   useEffect(() => {
     let raf = 0;
@@ -106,6 +122,20 @@ function useSimulationLoop(
     let prevFalling = [] as boolean[];
     let prevPhase = "";
     let snapshotThrottle = 0;
+    let lastGuestIntent: InputIntent = EMPTY_INTENT;
+
+    // Buffer de entrada (compensación de latencia): el host sólo consume los
+    // intents del guest cuando han madurado (2 frames) para atenuar el jitter.
+    const resolveGuestIntent = (): InputIntent => {
+      const buf = guestInputBufferRef?.current;
+      if (!buf) return lastGuestIntent;
+      const now = performance.now();
+      while (buf.length > 0 && buf[0]!.readyAt < now - 1000) buf.shift();
+      while (buf.length > 0 && buf[0]!.readyAt <= now) {
+        lastGuestIntent = buf.shift()!.intent;
+      }
+      return lastGuestIntent;
+    };
 
     const loop = (now: number) => {
       const delta = Math.min((now - last) / 1000, 0.1);
@@ -142,8 +172,8 @@ function useSimulationLoop(
         // Host o Single Player
         const p1Intent = input.current?.readIntent() ?? EMPTY_INTENT;
         const p2Intent = onlineConfig
-          ? guestIntentRef?.current ?? EMPTY_INTENT
-          : ai.current?.think(m.fighters[1], m.fighters[0]) ?? EMPTY_INTENT;
+          ? resolveGuestIntent()
+          : (ai.current?.think(m.fighters[1], m.fighters[0]) ?? EMPTY_INTENT);
 
         stepMatch(m, [p1Intent, p2Intent]);
 
@@ -154,6 +184,7 @@ function useSimulationLoop(
             snapshotThrottle = 0;
             const snap: MatchSnapshot = {
               tick: m.tick,
+              timestamp: Date.now(),
               phase: m.phase,
               announce: m.announce,
               round: m.round,
@@ -219,7 +250,7 @@ function useSimulationLoop(
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [match, input, ai, paused, onlineConfig, netClientRef, guestIntentRef]);
+  }, [match, input, ai, paused, onlineConfig, netClientRef, guestInputBufferRef]);
 }
 
 export function GameCanvas({
@@ -255,7 +286,7 @@ export function GameCanvas({
 
   // Gestión de red online
   const netClientRef = useRef<MatchNetworkClient | null>(null);
-  const guestIntentRef = useRef(EMPTY_INTENT);
+  const guestInputBufferRef = useRef<BufferedInput[]>([]);
   const [onlineNotice, setOnlineNotice] = useState<string | null>(null);
 
   audio.ensureInit();
@@ -264,13 +295,21 @@ export function GameCanvas({
   useEffect(() => {
     if (!onlineConfig) return;
 
-    const net = connectGameChannel(onlineConfig.roomId);
+    const net = connectGameChannel(onlineConfig.roomId, onlineConfig.isHost);
     netClientRef.current = net;
 
+    // Aviso cuando la presencia detecta que el rival se desconectó.
+    net.onOpponentDisconnect(() => {
+      setOnlineNotice("Tu rival se desconectó. La partida queda cerrada (abandon).");
+    });
+
     if (onlineConfig.isHost) {
-      // Host recibe intents de Guest
+      // Host recibe intents de Guest y los mete en el buffer de latencia
       net.onGuestIntent((intent) => {
-        guestIntentRef.current = intent;
+        const sentAt = intent.timestamp ?? Date.now();
+        const remaining = INPUT_DELAY_MS - (Date.now() - sentAt);
+        const delay = Math.max(0, Math.min(remaining, INPUT_DELAY_MS * 2));
+        guestInputBufferRef.current.push({ intent, readyAt: performance.now() + delay });
       });
       net.onMatchAction((action) => {
         if (action === "rematch") {
@@ -327,26 +366,21 @@ export function GameCanvas({
     };
   }, [onlineConfig, onRematch]);
 
-  useSimulationLoop(
-    match,
-    input,
-    ai,
-    pausedRef,
-    onlineConfig,
-    netClientRef,
-    guestIntentRef,
-  );
+  useSimulationLoop(match, input, ai, pausedRef, onlineConfig, netClientRef, guestInputBufferRef);
 
-  const togglePause = useCallback((value?: boolean) => {
-    // En multijugador online no se pausa el juego global
-    if (onlineConfig) return;
-    setPaused((p) => {
-      const next = value ?? !p;
-      pausedRef.current = next;
-      audio.setPaused(next);
-      return next;
-    });
-  }, [onlineConfig]);
+  const togglePause = useCallback(
+    (value?: boolean) => {
+      // En multijugador online no se pausa el juego global
+      if (onlineConfig) return;
+      setPaused((p) => {
+        const next = value ?? !p;
+        pausedRef.current = next;
+        audio.setPaused(next);
+        return next;
+      });
+    },
+    [onlineConfig],
+  );
 
   // Atrapa la tecla de pausa (configurable)
   useEffect(() => {
@@ -460,7 +494,7 @@ export function GameCanvas({
     <div className="fixed inset-0 bg-background">
       {/* Badge indicador de sala online en pantalla */}
       {onlineConfig && (
-        <aside 
+        <aside
           aria-label="Información de sala online"
           className="pointer-events-none absolute left-4 top-4 z-20 flex items-center gap-2 rounded-full border border-hud-stamina/50 bg-background/80 px-3.5 py-1 text-xs font-bold tracking-widest text-hud-stamina backdrop-blur-md"
         >
@@ -538,11 +572,7 @@ export function GameCanvas({
 
           <h2
             className={`font-display text-5xl md:text-6xl tracking-[0.3em] font-black mb-6 drop-shadow-[0_0_24px_currentColor] ${
-              isDraw
-                ? "text-hud-timer"
-                : localPlayerWon
-                  ? "text-hud-stamina"
-                  : "text-hud-health"
+              isDraw ? "text-hud-timer" : localPlayerWon ? "text-hud-stamina" : "text-hud-health"
             }`}
           >
             {isDraw ? "EMPATE" : localPlayerWon ? "VICTORIA" : "DERROTA"}

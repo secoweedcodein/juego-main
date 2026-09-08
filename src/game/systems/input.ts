@@ -92,6 +92,7 @@ export class KeyboardInput {
       kick: this.edge("kick"),
       grab: this.edge("grab"),
       interact: this.edge("interact"),
+      timestamp: Date.now(),
     };
   }
 }
