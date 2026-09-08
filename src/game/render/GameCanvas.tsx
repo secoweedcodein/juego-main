@@ -114,6 +114,7 @@ function useSimulationLoop(
 ) {
   useEffect(() => {
     let raf = 0;
+    let timeoutId: number | null = null;
     let last = performance.now();
     let acc = 0;
     let prevHealth = [] as number[];
@@ -124,13 +125,13 @@ function useSimulationLoop(
     let snapshotThrottle = 0;
     let lastGuestIntent: InputIntent = EMPTY_INTENT;
 
-    // Buffer de entrada (compensación de latencia): el host sólo consume los
-    // intents del guest cuando han madurado (2 frames) para atenuar el jitter.
+    // Buffer de entrada (compensación de latencia)
     const resolveGuestIntent = (): InputIntent => {
       const buf = guestInputBufferRef?.current;
       if (!buf) return lastGuestIntent;
       const now = performance.now();
-      while (buf.length > 0 && buf[0]!.readyAt < now - 1000) buf.shift();
+      // Limitar tamaño del buffer, no descartar por antigüedad
+      if (buf.length > 10) buf.splice(0, buf.length - 10);
       while (buf.length > 0 && buf[0]!.readyAt <= now) {
         lastGuestIntent = buf.shift()!.intent;
       }
@@ -147,7 +148,7 @@ function useSimulationLoop(
 
       if (isPaused) {
         acc = 0;
-        raf = requestAnimationFrame(loop);
+        scheduleNext();
         return;
       }
 
@@ -155,7 +156,7 @@ function useSimulationLoop(
       if (onlineConfig && !onlineConfig.isHost) {
         const p2Intent = input.current?.readIntent() ?? EMPTY_INTENT;
         netClientRef?.current?.sendGuestIntent(p2Intent);
-        raf = requestAnimationFrame(loop);
+        scheduleNext();
         return;
       }
 
@@ -169,7 +170,6 @@ function useSimulationLoop(
           prevPhase = m.phase;
         }
 
-        // Host o Single Player
         const p1Intent = input.current?.readIntent() ?? EMPTY_INTENT;
         const p2Intent = onlineConfig
           ? resolveGuestIntent()
@@ -177,7 +177,7 @@ function useSimulationLoop(
 
         stepMatch(m, [p1Intent, p2Intent]);
 
-        // Si es Host Online, enviar snapshot al Guest (cada ~2 ticks / 30Hz o en eventos)
+        // Host Online: enviar snapshot
         if (onlineConfig && onlineConfig.isHost && netClientRef?.current) {
           snapshotThrottle++;
           if (snapshotThrottle >= 2 || m.events.length > 0 || m.phase !== prevPhase) {
@@ -197,7 +197,7 @@ function useSimulationLoop(
           }
         }
 
-        // Audio conectado a cambios reales de estado.
+        // Audio y efectos
         const n = m.fighters;
         for (let i = 0; i < n.length; i++) {
           const f = n[i]!;
@@ -212,7 +212,6 @@ function useSimulationLoop(
         prevJump = n.map((f) => !f.grounded);
         prevFalling = n.map((f) => f.fallingOut);
 
-        // Sonidos de impacto
         for (const e of m.events) {
           if (e.attackerId === "stage") {
             audio.playSfx("hitLight");
@@ -235,7 +234,6 @@ function useSimulationLoop(
           }
         }
 
-        // Fanfarria de victoria/derrota
         if (m.phase === "matchEnd" && prevPhase !== "matchEnd") {
           const playerWon = m.wins[0] > m.wins[1];
           audio.playSfx(playerWon ? "victory" : "defeat");
@@ -246,10 +244,28 @@ function useSimulationLoop(
         steps++;
       }
       if (steps === 6) acc = 0;
-      raf = requestAnimationFrame(loop);
+      scheduleNext();
     };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
+
+    // Función que decide si usar rAF o setTimeout
+    const scheduleNext = () => {
+      // Si la página está oculta, usar setTimeout para evitar throttling
+      if (document.hidden) {
+        timeoutId = window.setTimeout(() => loop(performance.now()), 16); // ~60fps
+      } else {
+        raf = requestAnimationFrame(loop);
+      }
+    };
+
+    // Iniciar el bucle
+    scheduleNext();
+
+    return () => {
+      cancelAnimationFrame(raf);
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
+    };
   }, [match, input, ai, paused, onlineConfig, netClientRef, guestInputBufferRef]);
 }
 
@@ -571,9 +587,8 @@ export function GameCanvas({
           </div>
 
           <h2
-            className={`font-display text-5xl md:text-6xl tracking-[0.3em] font-black mb-6 drop-shadow-[0_0_24px_currentColor] ${
-              isDraw ? "text-hud-timer" : localPlayerWon ? "text-hud-stamina" : "text-hud-health"
-            }`}
+            className={`font-display text-5xl md:text-6xl tracking-[0.3em] font-black mb-6 drop-shadow-[0_0_24px_currentColor] ${isDraw ? "text-hud-timer" : localPlayerWon ? "text-hud-stamina" : "text-hud-health"
+              }`}
           >
             {isDraw ? "EMPATE" : localPlayerWon ? "VICTORIA" : "DERROTA"}
           </h2>
